@@ -34,6 +34,7 @@ or mis-save money data, and never show a number that isn't true.
 | Auth | email + password, email confirmation ON; Site URL + Redirect URL = the live URL (set in dashboard → Authentication → URL Configuration) |
 | Env vars (Vercel prod + preview) | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (public, type "config") |
 | MF prices | `api.mfapi.in` (free, AMFI data, no CORS) via our relay routes |
+| Stock chart | TejHQ NSE/BSE OHLCV endpoint; daily end-of-day history, no intraday polling or broker connection |
 
 **New machine (from the zip or a git clone):** `npm install` → logins below → `npx vercel env pull .env.local`
 (gives the hosted Supabase URL/anon key, so `npm run dev` runs against the real cloud data; use a local Supabase for risky experiments) → `npm run check`.
@@ -72,11 +73,11 @@ src/app/              routes: page.tsx (client-only entry), layout, manifest (PW
 src/components/
   App.tsx             auth gate → welcome (start fresh / demo) → Dashboard
   Dashboard.tsx       the screen: `sections` list (what Customize reorders), ＋ ActionMenu, AccountMenu
-  cards/              dashboard cards: Bank (bank balance, card dues + cycle + rewards), Payments (UPI vs cards),
+  cards/              dashboard cards: Bank (bank balance, card dues + cycle + rewards), Payments (UPI vs cards), StockMarket,
                       Budgets, CreditScore, Friends (split bills), ComingUp (due items, Mark paid),
-                      Portfolio, Motivation (level, badges, goals…), Game
+                      Portfolio, FD/RD portfolio, Motivation (level, badges, goals…), Game
   sheets/             pop-up forms: Forms (Modal, recurring, goal, balance, fund picker), QuickAdd (+ split, best-card hint),
-                      ImportSheet, Settings (cards: limit, due/statement day, rewards; salary cut-off), Budgets,
+                      ImportSheet, Settings (cards: limit, due/statement day, reward rules; salary cut-off), Budgets,
                       Customize, Wrapped (year-in-review slides)
   ui/                 primitives (Card, Tile, Bar, Chip), CardChip + CardPicker, charts (ECharts options), Ticker
 src/lib/
@@ -88,7 +89,9 @@ src/lib/
   periods.ts          day/week/month/year ranges ("to the same point" comparisons)
   insights.ts         bank flow, net worth, FIRE, streaks, badges, level, report card, challenges, quiz
   mf.ts               NAV fetch/cache, units & holdings, portfolio series
-  cards.ts            known-card catalog (chip colours), reward presets/rates, best card, billing cycle
+  stocks.ts           stock lots, saved quotes, P&L and XIRR
+  cards.ts            known-card catalog (chip colours), cap-aware rewards, best card, billing cycle
+  cardRegistry.ts     brochure-backed reward rules and issuer source notes
   wrapped.ts          year-in-review numbers          export.ts  Excel export      calendar.ts  reminders .ics
   statements/         parse.ts (dates, amounts, tables, PDFs, merchants, categories, transfers, reconciliation),
                       read.ts (PDF/CSV/Excel in the browser)
@@ -103,9 +106,9 @@ Scripts: `npm run dev | check | test | db:push | db:local | deploy` (`deploy` = 
 
 ## Data model
 
-`transactions` (date timestamptz, amount > 0, type expense|income|invest|transfer, category, merchant, mode, `recurring_id` → the EMI/SIP/bill it pays, `account` = credit card name),
-`recurring` (kind Salary|EMI|SIP|Subscription|Bill|Rent, amount, `day` of month, `month` for yearly, `start_date`, `tenure` for EMIs, `scheme_code`/`units_held`/`held_invested` for SIPs),
-`goals`, `profiles` (opening_balance, layout jsonb, cards jsonb `[{name, limit?, dueDay?, statementDay?, rewards?: {base, bonus: [{match, rate}]}}]`, salary_cutoff int default 25 (null = off), budgets jsonb `{category: amount}`, credit_scores jsonb `[{date, score, bureau}]`). `transactions.split` jsonb `[{name, amount, settled}]`. A `profiles` row = account set up (skips the welcome screen).
+`transactions` (date timestamptz, amount > 0, type expense|income|invest|transfer, category, merchant, mode, `recurring_id` → the EMI/SIP/bill it pays, `account` = credit card name, optional FD/RD terms and stock lot fields),
+`recurring` (kind Salary|EMI|SIP|FD|RD|Subscription|Bill|Rent, amount, `day` of month, `month` for yearly, `start_date`, EMI `loan_principal`/`annual_rate`/`tenure`, FD/RD compounding and maturity fields, SIP `scheme_code`/`units_held`/`held_invested`),
+`goals`, `profiles` (opening_balance, layout jsonb, `stock_quotes` jsonb, cards jsonb with limit/due/statement days and reward rules, salary_cutoff int default 25 (null = off), budgets jsonb `{category: amount}`, credit_scores jsonb `[{date, score, bureau}]`). `transactions.split` jsonb `[{name, amount, settled}]`. A `profiles` row = account set up (skips the welcome screen).
 
 ## Rules the code relies on (each one was a real bug)
 
@@ -117,11 +120,14 @@ Scripts: `npm run dev | check | test | db:push | db:local | deploy` (`deploy` = 
 - The repeat day comes from the first payment date; `dueIn` clamps the 31st to short months.
 - Headline says "spent" until income is logged; "saved/overspent" only with income.
 - **Salary cut-off:** income with category "Salary" dated on/after `salary_cutoff` counts for the next month. Only month maths use `forMonthMaths(txns)`; lists, editing, duplicate checks use real dates (`rawTxns` in Dashboard).
-- **Credit cards:** a card spend (`isCardSpend`: expense with mode Card or an `account`) is spending when swiped but leaves the bank only when the bill is paid. Bill payment = `type: "transfer"`, `account` = card, never counted as spending. Bank = opening + income − non-card spend − invest − transfers; card dues = card spend − transfers; net worth subtracts dues (`bankFlow` in insights.ts).
+- **Credit cards:** a card spend (`isCardSpend`: expense with mode Card or an `account`) is spending in the swipe month but leaves the bank only when the bill is paid. Bill payment = `type: "transfer"`, `account` = card, never counted as spending. Bank = opening + income − non-card spend − invest − transfers; card dues = card spend − transfers; net worth subtracts dues (`bankFlow` in insights.ts). The "Where it went" cash-outflow chart includes card-bill transfers; the Money Flow Sankey excludes them to avoid counting the purchase twice.
 - **Split bills:** the row's `amount` is your share (that's your spending); `split` holds friends' shares. They leave the bank (or go on the card) when you pay and come back as income when settled; unsettled shares count as owed to you in net worth (`bankFlow`).
-- **Rewards:** % value back per card (`rewards.base` + keyword bonuses, "|" = or, plain text). Only two presets (HDFC Swiggy, SBI BPCL Octane), always labelled "check your card's terms"; never invent rates.
+- **Rewards:** `cardRegistry.ts` holds source-backed presets only where the terms can be represented safely. Estimates apply merchant keyword rules, cycle caps, minimum transaction, eligible-spend caps, exclusions and source-authorized fallback to base. Keyword matching cannot know issuer MCC/MID/TID classification; label estimates and link source notes. User-edited card rules override presets.
 - **Reminders** are an .ics calendar file (monthly/yearly RRULEs, alarm the evening before; day ≥29 → last day of month). No push server.
 - **Net worth / FIRE today** use live NAVs for linked funds (`mfNow`), the assumed return for the rest and for history.
+- **Stocks:** each `Stocks` investment transaction is one lot with exchange-qualified symbol, quantity, unit price and purchase date. The portfolio uses saved daily close quotes for value, P&L and XIRR. Refresh on first view, manually, and once daily around 9:15 IST while the page stays open; no intraday polling. Quotes are stored in `profiles.stock_quotes`.
+- **FD/RD:** maturity estimates use saved principal/deposit, annual rate, term, compounding and payout frequency. A receipt maturity amount takes priority; periodic interest payouts are not included in the deposit balance. Do not present estimates as guaranteed bank quotes.
+- **Loans:** EMI can be calculated from principal, annual rate and tenure, or entered manually. The form shows estimated total repayment and interest; preserve manual-entry mode.
 - Import: bank-side "credit card/BBPS/autopay" debits and card-side "payment received" credits both become transfers; whichever statement is imported first records it, the other is flagged duplicate (same amount ±4 days). Card refunds stay unticked.
 - MF value = Σ(payment ÷ NAV that day) units + `units_held`, × latest NAV. NAVs cache 6 h on device + 6 h at the CDN.
 - Statement import never saves without review; bank statements reconcile opening + credits − debits = closing row by row; card payments/refunds/transfers start unticked; duplicates (±1.5 days, same amount) flagged.
@@ -132,13 +138,13 @@ Scripts: `npm run dev | check | test | db:push | db:local | deploy` (`deploy` = 
 
 ## UI map (where users find things)
 
-- Big **＋** (bottom right) opens a menu: add expense/income, import statement, pay card bill, add EMI/SIP/bill, cards & settings, customize layout.
+- Big **＋** (bottom right) opens a menu: add expense/income (including Flexipay), invest (including stock lots and FD/RD entries), import a statement, pay a card bill, add EMI/SIP/FD/RD/bill, cards & settings, customize layout.
 - 👤 menu (top right): customize layout, cards & settings, edit bank balance, sign out, delete all data.
 - Customize also sits next to the Day/Week/Month/Year switch. Transactions card has its own Import button.
-- Tap any transaction / EMI / SIP / subscription / goal to edit or delete it.
+- Tap any transaction / EMI / SIP / FD / RD / subscription / goal to edit or delete it.
 
 ## Open questions / next up
 
-- SMS auto-capture via iPhone Shortcuts; true push reminders (needs a server cron + VAPID keys); budgets for custom categories; multiple bonus rules per card in the UI.
+- SMS auto-capture via iPhone Shortcuts; true push reminders (needs a server cron + VAPID keys); verify whether custom categories can have budgets.
 - Statement parsers were built from typical layouts and fake samples. Owner's accounts: HDFC Bank; cards HDFC Swiggy, SBI Pulse / BPCL Octane / PhonePe Black, BOB OneCard, BOBCARD Eterna, IndusInd EazyDiner Platinum, CSB Jupiter Edge+. Tune parsers from the owner's feedback (masked structure only, never real data).
 - Should EMIs-left in net worth drop only when an EMI is marked paid? (asked, unanswered)
