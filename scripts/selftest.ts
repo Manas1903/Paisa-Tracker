@@ -166,8 +166,8 @@ ok("wrapped: null with no data", wrapped([], 2026) === null);
 // --- real fund value replaces the assumed return in today's net worth
 const demo = demoBook(now);
 const assumed = netWorth(demo, now).at(-1)!, real = netWorth(demo, now, undefined, { value: 1, invested: 402000 }).at(-1)!;
-// All demo SIPs "worth ₹1 today" → today's investments ≈ ₹1, far below the assumed-return value.
-ok("net worth uses live fund value when given", real.invest < 10 && assumed.invest > 100000, { real: real.invest, assumed: assumed.invest });
+// The synthetic stock lots remain in net worth; the linked mutual funds use the supplied live value.
+ok("net worth uses live fund value when given", real.invest > 10 && real.invest < assumed.invest - 1000 && assumed.invest > 100000, { real: real.invest, assumed: assumed.invest });
 
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
 process.exit(failed ? 1 : 0);
