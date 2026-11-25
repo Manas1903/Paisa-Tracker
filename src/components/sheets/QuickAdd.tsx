@@ -6,14 +6,15 @@ import { useEffect, useState } from "react";
 import { CATEGORIES, type CreditCard, type Mode, type Txn, type TxnType } from "@/lib/data";
 import { DeleteButton } from "@/components/sheets/Forms";
 import { CardPicker } from "@/components/ui/CardChip";
-import { bestCard, rewardRate } from "@/lib/cards";
+import { bestCardForSpend, estimateCardReward } from "@/lib/cards";
+import { fmt } from "@/lib/format";
 import { STORAGE } from "@/lib/config";
 import { todayYmd as today, ymd } from "@/lib/dates";
 
 const CATS: Record<TxnType, string[]> = {
   expense: [...CATEGORIES.map((c) => c.name), "Health", "Other"],
-  income: ["Salary", "Freelance", "Interest", "Other"],
-  invest: ["Nifty 50 Index", "Flexi Cap", "ELSS", "Stocks", "FD", "Gold"],
+  income: ["Salary", "Freelance", "Flexipay", "Interest", "Other"],
+  invest: ["Nifty 50 Index", "Flexi Cap", "ELSS", "Stocks", "FD", "RD", "Gold"],
   transfer: ["Card bill"],
 };
 const TYPE_LABEL: Record<TxnType, string> = { expense: "Expense", income: "Income", invest: "Invest", transfer: "Card bill" };
@@ -22,9 +23,9 @@ const MODES: Mode[] = ["UPI", "Card", "Cash", "NetBanking", "AutoPay"];
 const field = "w-full min-w-0 rounded-2xl border border-line bg-soft px-3 py-2.5 text-base outline-none transition focus:border-ink focus:bg-card";
 
 /** Add a transaction, or edit one when `editing` is set (remount with a new `key` per item). */
-export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAddCard }: {
+export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAddCard, txns }: {
   open: boolean; onClose: () => void; onAdd: (t: Txn) => Promise<boolean>; editing?: Partial<Txn>; onDelete?: () => Promise<boolean>;
-  cards: CreditCard[]; onAddCard: (name: string) => void;
+  cards: CreditCard[]; onAddCard: (name: string) => void; txns: Txn[];
 }) {
   const cardNames = cards.map((c) => c.name);
   // Split: the amount box holds the full bill; your share is what's left after friends' equal shares.
@@ -37,6 +38,18 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
   const [merchant, setMerchant] = useState(editing?.merchant && editing.merchant !== editing.category ? editing.merchant : "");
   const [date, setDate] = useState(editing?.date ? ymd(editing.date) : ""); // "" = today, read fresh each time
   const [mode, setMode] = useState<Mode>(editing?.mode ?? "UPI");
+  const [annualRate, setAnnualRate] = useState(editing?.annualRate == null ? "" : String(editing.annualRate));
+  const [tenureMonths, setTenureMonths] = useState(editing?.tenureMonths == null ? "" : String(editing.tenureMonths));
+  const [institution, setInstitution] = useState(editing?.institution ?? "");
+  const [product, setProduct] = useState(editing?.product ?? "");
+  const [compoundingFrequency, setCompoundingFrequency] = useState<NonNullable<Txn["compoundingFrequency"]>>(editing?.compoundingFrequency ?? "quarterly");
+  const [payoutFrequency, setPayoutFrequency] = useState<NonNullable<Txn["payoutFrequency"]>>(editing?.payoutFrequency ?? "maturity");
+  const [maturityAmount, setMaturityAmount] = useState(editing?.maturityAmount == null ? "" : String(editing.maturityAmount));
+  const [maturityDate, setMaturityDate] = useState(editing?.maturityDate ? ymd(editing.maturityDate) : "");
+  const [maturityInstruction, setMaturityInstruction] = useState<NonNullable<Txn["maturityInstruction"]>>(editing?.maturityInstruction ?? "credit");
+  const [stockSymbol, setStockSymbol] = useState(editing?.stockSymbol?.replace(/^(NSE|BSE):/i, "") ?? "");
+  const [stockQuantity, setStockQuantity] = useState(editing?.stockQuantity == null ? "" : String(editing.stockQuantity));
+  const [stockUnitPrice, setStockUnitPrice] = useState(editing?.stockUnitPrice == null ? "" : String(editing.stockUnitPrice));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -63,8 +76,16 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
     e.preventDefault();
     if (busy) return;
     setErr("");
-    const n = Math.round(Number(amount) * 100) / 100;
+    const isStockLot = type === "invest" && category === "Stocks";
+    const rawStockSymbol = stockSymbol.trim().toUpperCase();
+    const symbol = rawStockSymbol && !rawStockSymbol.includes(":") ? `NSE:${rawStockSymbol}` : rawStockSymbol;
+    const qty = Number(stockQuantity), price = Number(stockUnitPrice);
+    if (isStockLot && (!symbol || !(qty > 0) || !(price > 0))) return setErr("Enter a stock symbol, units and purchase price");
+    const n = Math.round((isStockLot ? qty * price : Number(amount)) * 100) / 100;
     if (!(n >= 0.01 && n < 1e10)) return setErr("Enter an amount between ₹0.01 and ₹999 crore");
+    if (type === "invest" && (category === "FD" || category === "RD") && !(Number(annualRate) >= 0 && Number(annualRate) <= 100)) return setErr("Enter the deposit's annual interest rate");
+    if (type === "invest" && (category === "FD" || category === "RD") && !(Number.isInteger(Number(tenureMonths)) && Number(tenureMonths) >= 1 && Number(tenureMonths) <= 600)) return setErr("Enter a deposit term from 1 to 600 months");
+    if (type === "invest" && (category === "FD" || category === "RD") && maturityAmount && !(Number(maturityAmount) > 0 && Number(maturityAmount) < 1e10)) return setErr("Enter a valid receipt maturity amount");
     const [y, m, d] = (date || today()).split("-").map(Number);
     const clock = editing?.date ?? new Date(); // keep the original time of day when editing
     const when = new Date(y, m - 1, d, clock.getHours(), clock.getMinutes(), clock.getSeconds());
@@ -80,12 +101,23 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
     const ok = await onAdd(type === "transfer"
       ? { id: editing?.id ?? crypto.randomUUID(), date: when, amount: n, type, category: "Card bill", merchant: merchant.trim() || `${account} bill`, mode: "NetBanking", account }
       : { id: editing?.id ?? crypto.randomUUID(), date: when, amount: names.length ? mine : n, type, category, merchant: merchant.trim() || category, mode,
-          recurringId: editing?.recurringId, account: onCard ? account : undefined, split: names.length ? split : undefined });
+          recurringId: editing?.recurringId, account: onCard ? account : undefined, split: names.length ? split : undefined,
+          annualRate: type === "invest" && (category === "FD" || category === "RD") ? Number(annualRate) : undefined,
+          tenureMonths: type === "invest" && (category === "FD" || category === "RD") ? Number(tenureMonths) : undefined,
+          institution: type === "invest" && (category === "FD" || category === "RD") ? institution.trim() || undefined : undefined,
+          product: type === "invest" && (category === "FD" || category === "RD") ? product.trim() || undefined : undefined,
+          compoundingFrequency: type === "invest" && (category === "FD" || category === "RD") ? compoundingFrequency : undefined,
+          payoutFrequency: type === "invest" && (category === "FD" || category === "RD") ? payoutFrequency : undefined,
+          maturityAmount: type === "invest" && (category === "FD" || category === "RD") ? (Number(maturityAmount) || undefined) : undefined,
+          maturityDate: type === "invest" && (category === "FD" || category === "RD") && maturityDate ? new Date(`${maturityDate}T00:00:00`) : undefined,
+          maturityInstruction: type === "invest" && (category === "FD" || category === "RD") ? maturityInstruction : undefined,
+          stockSymbol: isStockLot ? symbol : undefined, stockQuantity: isStockLot ? qty : undefined, stockUnitPrice: isStockLot ? price : undefined });
     setBusy(false);
     if (!ok) return; // keep what was typed so it can be retried
     setAmount("");
     setMerchant("");
     setDate("");
+    if (isStockLot) { setStockQuantity(""); setStockUnitPrice(""); }
     onClose();
   }
 
@@ -115,9 +147,15 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
 
             <div className="relative">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-3xl font-black text-ink3">₹</span>
-              <input autoFocus inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
+              <input autoFocus inputMode="decimal" value={type === "invest" && category === "Stocks" ? (Number(stockQuantity) > 0 && Number(stockUnitPrice) > 0 ? String(Math.round(Number(stockQuantity) * Number(stockUnitPrice) * 100) / 100) : "") : amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} readOnly={type === "invest" && category === "Stocks"}
                 placeholder="0" className={`${field.replace("text-base", "")} py-4 pl-11 text-4xl font-black tracking-tight tabular-nums`} />
             </div>
+            {type === "invest" && category === "Stocks" && <div className="grid grid-cols-2 gap-3 rounded-2xl bg-soft p-3">
+              <label className="col-span-2 space-y-1"><span className="text-xs font-medium text-ink3">NSE stock symbol</span><input required list="stock-symbols" value={stockSymbol} onChange={(e) => setStockSymbol(e.target.value)} className={field} placeholder="e.g. RELIANCE or NSE:RELIANCE" /><datalist id="stock-symbols">{["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "ITC", "LT", "BHARTIARTL", "TATAMOTORS"].map((s) => <option key={s} value={s} />)}</datalist></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Units / shares</span><input required inputMode="decimal" value={stockQuantity} onChange={(e) => setStockQuantity(e.target.value.replace(/[^\d.]/g, ""))} className={field} placeholder="e.g. 10" /></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Buy price per share ₹</span><input required inputMode="decimal" value={stockUnitPrice} onChange={(e) => setStockUnitPrice(e.target.value.replace(/[^\d.]/g, ""))} className={field} placeholder="e.g. 1,250" /></label>
+              <p className="col-span-2 text-xs text-ink3">Total invested is calculated from units × purchase price. Use separate entries for separate purchase dates.</p>
+            </div>}
 
             {type === "transfer" && <p className="-mt-1 text-xs text-ink3">Paying a credit card bill from the bank. Not spending: you counted it when you swiped.</p>}
             <div className="grid grid-cols-2 gap-3">
@@ -131,20 +169,37 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
                 <div className="col-span-2">
                   <CardPicker value={account} cards={cardNames} onChange={setAccount} onAdd={onAddCard} />
                   {type === "expense" && (() => {
-                    const best = bestCard(cards, merchant, category);
+                    const [y, m, d] = (date || today()).split("-").map(Number);
+                    const now = editing?.date ?? new Date();
+                    const spendDate = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+                    const spendAmount = Number(amount) || 0;
+                    const best = bestCardForSpend(cards, txns, merchant, category, spendAmount, spendDate, editing?.id);
                     const cur = cards.find((c) => c.name === account);
-                    const curRate = cur ? rewardRate(cur, merchant, category) : null;
-                    return best && best.card !== account && best.rate > (curRate ?? 0) ? (
+                    const current = cur ? estimateCardReward(cur, txns, merchant, category, spendAmount, spendDate, editing?.id) : null;
+                    return best && spendAmount > 0 && best.card !== account && best.reward > (current?.reward ?? 0) ? (
                       <button type="button" onClick={() => setAccount(best.card)} className="mt-1.5 rounded-full bg-pop-lime/40 px-3 py-1 text-xs font-semibold">
-                        💡 {best.card} gives {best.rate}% back here{curRate !== null ? ` (vs ${curRate}%)` : ""}: use it
+                        💡 {best.card}: about {fmt(best.reward)} back ({best.effectiveRate.toFixed(1)}% after this cycle&apos;s caps){best.capLimited ? " · cap reduces rewards" : ""} · use it
                       </button>
                     ) : null;
                   })()}
                 </div>
               )}
-              <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="Merchant / note" className={field} />
-              <input type="date" value={date || today()} onChange={(e) => setDate(e.target.value)} className={`${field} appearance-none text-left`} />
+              <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder={type === "invest" && category === "Stocks" ? "Company / note (optional)" : "Merchant / note"} className={field} />
+              <input type="date" value={date || today()} onChange={(e) => setDate(e.target.value)} aria-label={type === "invest" && category === "Stocks" ? "Purchase date" : "Date"} className={`${field} appearance-none text-left`} />
             </div>
+
+            {type === "invest" && (category === "FD" || category === "RD") && <div className="grid grid-cols-2 gap-3 rounded-2xl bg-soft p-3">
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Annual interest %</span><input required inputMode="decimal" value={annualRate} onChange={(e) => setAnnualRate(e.target.value.replace(/[^\d.]/g, ""))} className={field} placeholder="e.g. 7.1" /></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Term (months)</span><input required inputMode="numeric" value={tenureMonths} onChange={(e) => setTenureMonths(e.target.value.replace(/[^\d]/g, ""))} className={field} placeholder="e.g. 12" /></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Bank / issuer</span><input value={institution} onChange={(e) => setInstitution(e.target.value)} className={field} placeholder="e.g. SBI" /></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Deposit product</span><input value={product} onChange={(e) => setProduct(e.target.value)} className={field} placeholder="e.g. Special TD" /></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Compounding</span><select value={compoundingFrequency} onChange={(e) => setCompoundingFrequency(e.target.value as NonNullable<Txn["compoundingFrequency"]>)} className={field}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="half-yearly">Half-yearly</option><option value="yearly">Yearly</option></select></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Interest paid</span><select value={payoutFrequency} onChange={(e) => setPayoutFrequency(e.target.value as NonNullable<Txn["payoutFrequency"]>)} className={field}><option value="maturity">At maturity / cumulative</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="half-yearly">Half-yearly</option><option value="yearly">Yearly</option></select></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Maturity date</span><input type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} className={field} /></label>
+              <label className="space-y-1"><span className="text-xs font-medium text-ink3">Maturity amount ₹</span><input inputMode="decimal" value={maturityAmount} onChange={(e) => setMaturityAmount(e.target.value.replace(/[^\d.]/g, ""))} className={field} placeholder="Optional from receipt" /></label>
+              <label className="col-span-2 space-y-1"><span className="text-xs font-medium text-ink3">On maturity</span><select value={maturityInstruction} onChange={(e) => setMaturityInstruction(e.target.value as NonNullable<Txn["maturityInstruction"]>)} className={field}><option value="credit">Credit to linked bank</option><option value="renew-principal">Renew principal</option><option value="renew-principal-interest">Renew principal + interest</option></select></label>
+              <p className="col-span-2 text-xs text-ink3">Use receipt values when available. For an RD schedule, add it under Monthly commitments so each installment is tracked. Periodic interest payouts are separate from the deposit balance.</p>
+            </div>}
 
             {type === "expense" && (
               <div className="rounded-2xl bg-soft p-3">

@@ -1,4 +1,5 @@
 import { dueIn, type CreditCard, type Txn } from "./data";
+import { CARD_REGISTRY } from "./cardRegistry";
 
 /** Known cards/accounts, drawn as small colour chips. Our own artwork: issuer colours + names,
  *  never the banks' logos (trademarks). Add new ones here. */
@@ -39,13 +40,7 @@ export function cardStyle(name: string): CardStyle {
 
 // ---------- rewards & billing cycles ----------
 
-/** Typical published rates for a few cards, as % value back. Always shown as "check your card's terms"; users edit them. */
-export const REWARD_PRESETS: Record<string, CreditCard["rewards"]> = {
-  "HDFC Swiggy": { base: 1, bonus: [{ match: "swiggy", rate: 10 }] },
-  "SBI BPCL Octane": { base: 0.25, bonus: [{ match: "bpcl|bharat petroleum", rate: 7.25 }] },
-};
-
-export const rewardsFor = (c: CreditCard) => c.rewards ?? REWARD_PRESETS[cardStyle(c.name).name];
+export const rewardsFor = (c: CreditCard) => c.rewards ?? CARD_REGISTRY[cardStyle(c.name).name]?.rewards;
 
 /** "swiggy|zomato" → true if any keyword appears (plain text, case-insensitive; "|" means or). */
 export const keywordsMatch = (keywords: string, text: string) =>
@@ -56,8 +51,24 @@ export function rewardRate(c: CreditCard, merchant: string, category: string) {
   const r = rewardsFor(c);
   if (!r) return null;
   const text = `${merchant} ${category}`;
+  if (r.exclude && keywordsMatch(r.exclude, text)) return 0;
   const bonus = (r.bonus ?? []).filter((b) => keywordsMatch(b.match, text)).map((b) => b.rate);
   return Math.max(r.base, ...bonus);
+}
+
+function rewardRule(c: CreditCard, merchant: string, category: string) {
+  const rewards = rewardsFor(c);
+  if (!rewards) return null;
+  const text = `${merchant} ${category}`;
+  if (rewards.exclude && keywordsMatch(rewards.exclude, text)) return { rate: 0, key: "excluded", cap: undefined, fallbackToBase: false };
+  const bonus = (rewards.bonus ?? [])
+    .map((rule, i) => ({ rule, i }))
+    .filter(({ rule }) => keywordsMatch(rule.match, text))
+    .sort((a, b) => b.rule.rate - a.rule.rate)[0];
+  if (bonus && bonus.rule.rate > rewards.base) {
+    return { rate: bonus.rule.rate, key: `bonus:${bonus.i}`, cap: bonus.rule.capPerMonth, fallbackToBase: bonus.rule.fallbackToBase };
+  }
+  return { rate: rewards.base, key: "base", cap: rewards.baseCapPerMonth, fallbackToBase: false };
 }
 
 /** Card with the highest reward rate for this spend, among cards that have rates set. */
@@ -66,6 +77,70 @@ export function bestCard(cards: CreditCard[], merchant: string, category: string
     .map((c) => ({ card: c.name, rate: rewardRate(c, merchant, category) }))
     .filter((x): x is { card: string; rate: number } => x.rate !== null)
     .sort((a, b) => b.rate - a.rate)[0] ?? null;
+}
+
+export type RewardEstimate = { card: string; reward: number; effectiveRate: number; nominalRate: number; capLimited: boolean };
+
+function rewardCycle(c: CreditCard, date: Date) {
+  if (!c.statementDay) return { start: new Date(date.getFullYear(), date.getMonth(), 1), end: new Date(date.getFullYear(), date.getMonth() + 1, 1) };
+  const end = dueIn(date.getFullYear(), date.getMonth() + (date.getDate() > c.statementDay ? 1 : 0), c.statementDay);
+  const prevEnd = dueIn(end.getFullYear(), end.getMonth() - 1, c.statementDay);
+  return { start: new Date(prevEnd.getFullYear(), prevEnd.getMonth(), prevEnd.getDate() + 1), end: new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1) };
+}
+
+/** Calculates the next purchase's actual estimated reward after existing cycle caps and spend are applied. */
+export function estimateCardReward(c: CreditCard, txns: Txn[], merchant: string, category: string, amount: number, date: Date, ignoreTxnId?: string): RewardEstimate | null {
+  const rewards = rewardsFor(c);
+  if (!rewards) return null;
+  const cycle = rewardCycle(c, date);
+  const rule = rewardRule(c, merchant, category);
+  if (!rule || rule.rate <= 0 || !(amount > 0) || (rewards.minTransaction !== undefined && amount < rewards.minTransaction)) {
+    return { card: c.name, reward: 0, effectiveRate: 0, nominalRate: rule?.rate ?? 0, capLimited: false };
+  }
+
+  const earnedByRule = new Map<string, number>();
+  let spendUsed = 0;
+  const prior = txns.filter((t) => t.type === "expense" && t.account === c.name && t.id !== ignoreTxnId && t.date >= cycle.start && t.date <= date)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+  const apply = (m: string, cat: string, spend: number) => {
+    const r = rewardRule(c, m, cat);
+    if (!r || r.rate <= 0 || (rewards.minTransaction !== undefined && spend < rewards.minTransaction)) return 0;
+    const availableSpend = rewards.spendCapPerMonth === undefined ? spend : Math.min(spend, Math.max(0, rewards.spendCapPerMonth - spendUsed));
+    spendUsed += availableSpend;
+    if (availableSpend <= 0) return 0;
+    const earned = availableSpend * r.rate / 100;
+    const used = earnedByRule.get(r.key) ?? 0;
+    let amountEarned = earned;
+    if (r.cap !== undefined) {
+      const remaining = Math.max(0, r.cap - used);
+      amountEarned = Math.min(earned, remaining);
+      if (r.fallbackToBase && amountEarned < earned) {
+        const bonusSpend = r.rate > 0 ? remaining / (r.rate / 100) : 0;
+        const baseSpend = Math.max(0, availableSpend - bonusSpend);
+        const baseKey = "base";
+        const baseUsed = earnedByRule.get(baseKey) ?? 0;
+        const baseEarned = baseSpend * rewards.base / 100;
+        const baseRemaining = rewards.baseCapPerMonth === undefined ? baseEarned : Math.max(0, rewards.baseCapPerMonth - baseUsed);
+        const baseAmount = Math.min(baseEarned, baseRemaining);
+        earnedByRule.set(baseKey, baseUsed + baseAmount);
+        amountEarned += baseAmount;
+      }
+      earnedByRule.set(r.key, used + Math.min(earned, remaining));
+    } else earnedByRule.set(r.key, used + earned);
+    return rewards.roundPerTransaction ? Math.round(amountEarned) : amountEarned;
+  };
+
+  for (const t of prior) apply(t.merchant, t.category, t.amount);
+  const reward = apply(merchant, category, amount);
+  return { card: c.name, reward, effectiveRate: reward / amount * 100, nominalRate: rule.rate,
+    capLimited: reward + 0.000001 < amount * rule.rate / 100 };
+}
+
+/** Best configured card by estimated reward on this purchase, after this cycle's caps and spend are applied. */
+export function bestCardForSpend(cards: CreditCard[], txns: Txn[], merchant: string, category: string, amount: number, date: Date, ignoreTxnId?: string) {
+  return cards.map((c) => estimateCardReward(c, txns, merchant, category, amount, date, ignoreTxnId))
+    .filter((x): x is RewardEstimate => x !== null)
+    .sort((a, b) => b.reward - a.reward || b.effectiveRate - a.effectiveRate)[0] ?? null;
 }
 
 /** Current billing cycle: spends after the last statement date go on the next bill. */
@@ -80,9 +155,57 @@ export function billingCycle(c: CreditCard, now: Date) {
 
 /** Estimated rewards earned on a card's spends in a period. */
 export function rewardsEarned(c: CreditCard, txns: Txn[], from: Date, to: Date) {
-  return txns.reduce((a, t) => {
-    if (t.type !== "expense" || t.account !== c.name || t.date < from || t.date >= to) return a;
-    const rate = rewardRate(c, t.merchant, t.category);
-    return rate === null ? a : a + (t.amount * rate) / 100;
-  }, 0);
+  const cycleRuleEarned = new Map<string, number>();
+  const cycleSpend = new Map<string, number>();
+  const spends = txns
+    // Include the full history before `to` to consume cap usage from the
+    // statement-cycle start, even when that start falls before the display range.
+    .filter((t) => t.type === "expense" && t.account === c.name && t.date < to)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+  let total = 0;
+  for (const t of spends) {
+    const rule = rewardRule(c, t.merchant, t.category);
+    if (!rule || rule.rate <= 0) continue;
+    const rewards = rewardsFor(c);
+    if (rewards?.minTransaction !== undefined && t.amount < rewards.minTransaction) continue;
+    const date = t.date;
+    let cycleStart: Date;
+    if (c.statementDay) {
+      const end = dueIn(date.getFullYear(), date.getMonth() + (date.getDate() > c.statementDay ? 1 : 0), c.statementDay);
+      const prevEnd = dueIn(end.getFullYear(), end.getMonth() - 1, c.statementDay);
+      cycleStart = new Date(prevEnd.getFullYear(), prevEnd.getMonth(), prevEnd.getDate() + 1);
+    } else {
+      cycleStart = new Date(date.getFullYear(), date.getMonth(), 1);
+    }
+    const cycle = `${cycleStart.getFullYear()}-${cycleStart.getMonth()}`;
+    const capKey = `${cycle}:${rule.key}`;
+    const spendCap = rewards?.spendCapPerMonth;
+    const spendUsed = cycleSpend.get(cycle) ?? 0;
+    const eligibleSpend = spendCap === undefined ? t.amount : Math.min(t.amount, Math.max(0, spendCap - spendUsed));
+    cycleSpend.set(cycle, spendUsed + eligibleSpend);
+    if (eligibleSpend <= 0) continue;
+    const earned = (eligibleSpend * rule.rate) / 100;
+    const used = cycleRuleEarned.get(capKey) ?? 0;
+    let amount = earned;
+    if (rule.cap !== undefined) {
+      const remaining = Math.max(0, rule.cap - used);
+      amount = Math.min(earned, remaining);
+      if (rule.fallbackToBase && amount < earned) {
+        const remainingBonusSpend = rule.rate > 0 ? remaining / (rule.rate / 100) : 0;
+        const baseSpend = Math.max(0, eligibleSpend - remainingBonusSpend);
+        const baseKey = `${cycle}:base`;
+        const baseUsed = cycleRuleEarned.get(baseKey) ?? 0;
+        const baseEarned = (baseSpend * (rewards?.base ?? 0)) / 100;
+        const baseCap = rewards?.baseCapPerMonth;
+        const baseAmount = baseCap === undefined ? baseEarned : Math.min(baseEarned, Math.max(0, baseCap - baseUsed));
+        cycleRuleEarned.set(baseKey, baseUsed + baseAmount);
+        amount += baseAmount;
+      }
+      cycleRuleEarned.set(capKey, used + Math.min(earned, remaining));
+    } else {
+      cycleRuleEarned.set(capKey, used + earned);
+    }
+    if (t.date >= from) total += rewards?.roundPerTransaction ? Math.round(amount) : amount;
+  }
+  return total;
 }

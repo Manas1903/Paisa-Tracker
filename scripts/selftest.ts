@@ -7,7 +7,8 @@ import { readFileSync } from "node:fs";
 import * as XLSX from "xlsx";
 import { demoBook, forMonthMaths, lastEmi, nextDue, type Book, type Recurring, type Txn } from "../src/lib/data";
 import { budgetStatus } from "../src/lib/insights";
-import { bestCard, billingCycle, rewardRate } from "../src/lib/cards";
+import { bestCard, billingCycle, rewardRate, rewardsEarned, CARD_CATALOG } from "../src/lib/cards";
+import { CARD_REGISTRY, CARD_SOURCE_INFO } from "../src/lib/cardRegistry";
 import { remindersIcs } from "../src/lib/calendar";
 import { wrapped } from "../src/lib/wrapped";
 import { badges, bankFlow, cardUtilisation, challenges, fire, fundQuestions, makeQuestions, netWorth, reportCard, streaks } from "../src/lib/insights";
@@ -109,10 +110,35 @@ ok("quiz: fund question with % and short names", fq.length === 1 && fq[0].unit =
 
 // --- rewards, best card, billing cycle
 const swiggy = { name: "HDFC Swiggy" }, octane = { name: "SBI BPCL Octane" }, plain = { name: "Axis Ace", rewards: { base: 1.5 } };
-ok("preset: Swiggy order on HDFC Swiggy = 10%", rewardRate(swiggy, "Swiggy", "Food") === 10);
+ok("registry: Swiggy order on HDFC Swiggy = 10%", rewardRate(swiggy, "Swiggy", "Food") === 10);
 ok("best card for BPCL fuel = Octane", bestCard([swiggy, octane, plain], "BPCL PETROL PUMP", "Transport")?.card === "SBI BPCL Octane");
 ok("best card for groceries = 1.5% base card", bestCard([swiggy, octane, plain], "DMart", "Food")?.card === "Axis Ace");
 ok("odd keyword characters don't crash", rewardRate({ name: "X", rewards: { base: 1, bonus: [{ match: "(c++", rate: 5 }] } }, "a(c++ shop", "Other") === 5);
+const excludedCard = { name: "X", rewards: { base: 1, exclude: "fuel", bonus: [{ match: "bpcl", rate: 10 }] } };
+const excludedSpend = { ...T(new Date(2026, 10, 5), 1000, "expense", "BPCL", "Fuel", "Card"), account: "X" };
+ok("excluded spend earns zero even when a bonus keyword matches", rewardRate(excludedCard, "BPCL", "Fuel") === 0
+  && rewardsEarned(excludedCard, [excludedSpend], new Date(2026, 10, 1), new Date(2026, 11, 1)) === 0);
+const cappedCard = { name: "Cap test", statementDay: 10, rewards: { base: 1, bonus: [{ match: "swiggy", rate: 10, capPerMonth: 1500 }] } };
+const cappedSpends = [
+  { ...T(new Date(2026, 10, 12), 20000, "expense", "Swiggy", "Food", "Card"), account: "Cap test" },
+  { ...T(new Date(2026, 10, 20), 20000, "expense", "Swiggy", "Food", "Card"), account: "Cap test" },
+];
+ok("bonus cap applies across one billing cycle", rewardsEarned(cappedCard, cappedSpends, new Date(2026, 10, 11), new Date(2026, 11, 11)) === 1500);
+ok("bonus cap resets in the next billing cycle", rewardsEarned(cappedCard, [
+  ...cappedSpends,
+  { ...T(new Date(2026, 11, 12), 20000, "expense", "Swiggy", "Food", "Card"), account: "Cap test" },
+], new Date(2026, 10, 11), new Date(2027, 0, 11)) === 3000);
+const fallbackCard = { name: "Fallback", rewards: { base: 1, bonus: [{ match: "swiggy", rate: 10, capPerMonth: 1500, fallbackToBase: true }] } };
+ok("a source-authorized capped bonus can fall back to base", rewardsEarned(fallbackCard, cappedSpends.map((t) => ({ ...t, account: "Fallback" })), new Date(2026, 10, 1), new Date(2026, 11, 1)) === 1750);
+const spendLimited = { name: "Spend limit", rewards: { base: 0, bonus: [{ match: "shop", rate: 5 }], spendCapPerMonth: 10000 } };
+const largeSpend = { ...T(new Date(2026, 10, 5), 20000, "expense", "Shop", "Shopping", "Card"), account: "Spend limit" };
+ok("eligible spend cap limits the spend used for the estimate", rewardsEarned(spendLimited, [largeSpend], new Date(2026, 10, 1), new Date(2026, 11, 1)) === 500);
+ok("a saved rate overrides the registry", rewardRate({ name: "HDFC Swiggy", rewards: { base: 0.3, bonus: [] } }, "Swiggy", "Food") === 0.3);
+ok("registry keys are catalog cards with HTTPS sources and checked dates", Object.entries(CARD_REGISTRY).every(([name, entry]) =>
+  CARD_CATALOG.some((card) => card.name === name) && entry.source.startsWith("https://") && /^\d{4}-\d{2}-\d{2}$/.test(entry.checkedOn)));
+ok("every catalog card has a checked official source link", CARD_CATALOG.every((card) => CARD_SOURCE_INFO[card.name]?.source.startsWith("https://")
+  && /^\d{4}-\d{2}-\d{2}$/.test(CARD_SOURCE_INFO[card.name].checkedOn)));
+ok("old reward JSON without caps or exclusions still works", rewardRate({ name: "Old", rewards: { base: 1, bonus: [{ match: "shop", rate: 4 }] } }, "Shop", "Other") === 4);
 const cyc = billingCycle({ name: "C", statementDay: 15 }, new Date(2026, 10, 20));
 ok("billing cycle: 16 Nov → 15 Dec", !!cyc && cyc.start.getDate() === 16 && cyc.start.getMonth() === 10 && cyc.end.getMonth() === 11 && cyc.end.getDate() === 15, cyc);
 

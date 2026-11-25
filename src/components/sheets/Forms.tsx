@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Loader2, Search, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { RECURRING_KINDS, dueIn, kindDefaults, type Goal, type Recurring, type RecurringKind } from "@/lib/data";
+import { calculateEmi, fdMaturity, rdMaturity, RECURRING_KINDS, dueIn, kindDefaults, type Goal, type Recurring, type RecurringKind } from "@/lib/data";
 import { loadNav } from "@/lib/mf";
 import { todayYmd as today, ymd } from "@/lib/dates";
 
@@ -75,6 +75,16 @@ export function RecurringForm({ open, onClose, onSave, initial, onDelete, pastCo
   // First actual due date (older rows may store a start on a different day than the repeat day).
   const [start, setStart] = useState(initial ? ymd(dueIn(initial.start.getFullYear(), initial.start.getMonth(), initial.day)) : ""); // "" = today
   const [tenure, setTenure] = useState(initial?.tenure ? String(initial.tenure) : "");
+  const [annualRate, setAnnualRate] = useState(initial?.annualRate == null ? "" : String(initial.annualRate));
+  const [loanPrincipal, setLoanPrincipal] = useState(initial?.loanPrincipal == null ? "" : String(initial.loanPrincipal));
+  const [institution, setInstitution] = useState(initial?.institution ?? "");
+  const [product, setProduct] = useState(initial?.product ?? "");
+  const [compoundingFrequency, setCompoundingFrequency] = useState<NonNullable<Recurring["compoundingFrequency"]>>(initial?.compoundingFrequency ?? "quarterly");
+  const [payoutFrequency, setPayoutFrequency] = useState<NonNullable<Recurring["payoutFrequency"]>>(initial?.payoutFrequency ?? "maturity");
+  const [maturityAmount, setMaturityAmount] = useState(initial?.maturityAmount == null ? "" : String(initial.maturityAmount));
+  const [maturityDate, setMaturityDate] = useState(initial?.maturityDate ? ymd(initial.maturityDate) : "");
+  const [maturityInstruction, setMaturityInstruction] = useState<NonNullable<Recurring["maturityInstruction"]>>(initial?.maturityInstruction ?? "credit");
+  const [loanCalcOn, setLoanCalcOn] = useState(initial ? !!initial.loanPrincipal : true);
   const [fund, setFund] = useState(initial?.schemeCode ? { code: initial.schemeCode, name: initial.schemeName ?? "" } : null);
   const [unitsHeld, setUnitsHeld] = useState(initial?.unitsHeld ? String(initial.unitsHeld) : "");
   const [heldMode, setHeldMode] = useState<"total" | "avg">("total");
@@ -90,6 +100,13 @@ export function RecurringForm({ open, onClose, onSave, initial, onDelete, pastCo
   const latest = nav && fund && nav.code === fund.code ? nav : null;
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const months = Number(tenure) || 0;
+  const rate = Number(annualRate) || 0;
+  const calculatedEmi = calculateEmi(Number(loanPrincipal), rate, months);
+  const amountToSave = kind === "EMI" && loanCalcOn ? calculatedEmi : Math.round(Number(amount) * 100) / 100;
+  const [startYear, startMonth, startDay] = (start || today()).split("-").map(Number);
+  const depositDate = new Date(startYear, startMonth - 1, startDay);
+  const estimatedMaturityDate = new Date(depositDate.getFullYear(), depositDate.getMonth() + months - (kind === "RD" ? 1 : 0), depositDate.getDate());
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
@@ -97,26 +114,39 @@ export function RecurringForm({ open, onClose, onSave, initial, onDelete, pastCo
   }
 
   function save() {
-    const amt = Math.round(Number(amount) * 100) / 100;
-    const months = Number(tenure);
+    const amt = amountToSave;
     setErr("");
     const [y, m, d] = (start || today()).split("-").map(Number);
     const first = new Date(y, m - 1, d);
     if (!name.trim()) return setErr("Give it a name");
-    if (!(amt >= 0.01 && amt < 1e10)) return setErr("Enter a valid amount");
     if (isNaN(first.getTime())) return setErr("Pick a valid date");
     if (kind === "EMI" && !(Number.isInteger(months) && months >= 1 && months <= 600)) return setErr("Tenure must be 1–600 months");
+    if (kind === "EMI" && loanCalcOn && !(Number(loanPrincipal) > 0 && rate >= 0 && rate <= 100)) return setErr("Enter a valid loan principal and annual interest rate");
+    if (kind === "EMI" && !loanCalcOn && !(amt >= 0.01 && amt < 1e10)) return setErr("Enter a valid EMI amount");
+    if ((kind === "FD" || kind === "RD") && !(amt >= 0.01 && amt < 1e10)) return setErr("Enter a valid deposit amount");
+    if ((kind === "FD" || kind === "RD") && !(Number.isInteger(months) && months >= 1 && months <= 600)) return setErr("Term must be 1–600 months");
+    if ((kind === "FD" || kind === "RD") && !(rate >= 0 && rate <= 100)) return setErr("Enter a valid annual interest rate");
+    if ((kind === "FD" || kind === "RD") && maturityAmount && !(Number(maturityAmount) > 0 && Number(maturityAmount) < 1e10)) return setErr("Enter a valid maturity amount from your receipt");
     if (kind === "SIP" && held.units > 0 && !held.total) return setErr("Enter what those units cost: total invested or average price per unit");
     if (kind === "SIP" && held.total > 0 && !held.units) return setErr("Enter how many units you hold");
     run(() => onSave({
       id: initial?.id,
       name: name.trim(), kind, amount: amt, day: first.getDate(), // repeats on the same day as the first payment
       month: kind === "Subscription" && yearly ? first.getMonth() : undefined, // renews on the first payment's month
-      start: first, tenure: kind === "EMI" ? months : undefined,
+      start: first, tenure: ["EMI", "FD", "RD"].includes(kind) ? months : undefined,
       ...(kind === "SIP" ? {
         schemeCode: fund?.code, schemeName: fund?.name,
         unitsHeld: held.units || undefined, heldInvested: held.total ? Math.round(held.total * 100) / 100 : undefined,
       } : {}),
+      annualRate: ["EMI", "FD", "RD"].includes(kind) ? rate : undefined,
+      loanPrincipal: kind === "EMI" && loanCalcOn ? Number(loanPrincipal) : undefined,
+      institution: kind === "FD" || kind === "RD" ? institution.trim() || undefined : undefined,
+      product: kind === "FD" || kind === "RD" ? product.trim() || undefined : undefined,
+      compoundingFrequency: kind === "FD" || kind === "RD" ? compoundingFrequency : undefined,
+      payoutFrequency: kind === "FD" || kind === "RD" ? payoutFrequency : undefined,
+      maturityAmount: kind === "FD" || kind === "RD" ? (Number(maturityAmount) || undefined) : undefined,
+      maturityDate: (kind === "FD" || kind === "RD") && maturityDate ? new Date(`${maturityDate}T00:00:00`) : undefined,
+      maturityInstruction: kind === "FD" || kind === "RD" ? maturityInstruction : undefined,
       ...kindDefaults(kind, name.trim()),
     }, pastToo));
   }
@@ -133,10 +163,13 @@ export function RecurringForm({ open, onClose, onSave, initial, onDelete, pastCo
       <div className="grid grid-cols-2 gap-3">
         <Label text={kind === "SIP" ? "Fund name" : "Name"}>
           <input required value={name} onChange={(e) => setName(e.target.value)} className={field}
-            placeholder={{ EMI: "Car loan", SIP: "Nifty 50 Index", Subscription: "Netflix", Bill: "Electricity", Rent: "Rent", Salary: "Salary" }[kind]} />
+            placeholder={{ EMI: "Car loan", SIP: "Nifty 50 Index", FD: "Bank FD", RD: "Recurring deposit", Subscription: "Netflix", Bill: "Electricity", Rent: "Rent", Salary: "Salary" }[kind]} />
         </Label>
-        <Label text="Amount ₹"><input required inputMode="decimal" value={amount} onChange={(e) => setAmount(num(e.target.value))} className={field} placeholder="0" /></Label>
-        <Label wide text={kind === "EMI" ? "First EMI date (repeats on this day)" : "First payment date (repeats on this day)"}>
+        <Label text={kind === "RD" ? "Monthly deposit ₹" : kind === "FD" ? "Deposit amount ₹" : kind === "EMI" ? "Monthly EMI ₹" : "Amount ₹"}>
+          <input required inputMode="decimal" value={kind === "EMI" && loanCalcOn ? (calculatedEmi ? String(calculatedEmi) : "") : amount}
+            onChange={(e) => setAmount(num(e.target.value))} disabled={kind === "EMI" && loanCalcOn} className={`${field} disabled:opacity-60`} placeholder="0" />
+        </Label>
+        <Label wide text={kind === "EMI" ? "First EMI date (repeats on this day)" : kind === "FD" ? "Deposit date (one time)" : "First payment date (repeats on this day)"}>
           <input type="date" value={start || today()} onChange={(e) => setStart(e.target.value)} className={`${field} appearance-none text-left`} />
         </Label>
         {kind === "SIP" && (
@@ -176,8 +209,39 @@ export function RecurringForm({ open, onClose, onSave, initial, onDelete, pastCo
           </>
         )}
         {kind === "EMI" && (
-          <Label wide text="Tenure (months)"><input required inputMode="numeric" value={tenure} onChange={(e) => setTenure(num(e.target.value))} className={field} placeholder="60" /></Label>
+          <div className="col-span-2 space-y-3 rounded-2xl border border-line p-3">
+            <div className="flex gap-1 rounded-full bg-soft p-1 text-xs font-semibold">
+              {([[true, "Calculate EMI"], [false, "Enter EMI myself"]] as const).map(([on, label]) => <button key={label} type="button" onClick={() => setLoanCalcOn(on)} className={`flex-1 rounded-full py-2 ${loanCalcOn === on ? "bg-ink text-card" : "text-ink3"}`}>{label}</button>)}
+            </div>
+            {loanCalcOn && <Label text="Loan principal ₹"><input required inputMode="decimal" value={loanPrincipal} onChange={(e) => setLoanPrincipal(num(e.target.value))} className={field} placeholder="e.g. 800000" /></Label>}
+            <div className="grid grid-cols-2 gap-3">
+              <Label text="Annual interest %"><input required={loanCalcOn} inputMode="decimal" value={annualRate} onChange={(e) => setAnnualRate(num(e.target.value))} className={field} placeholder="e.g. 9.5" /></Label>
+              <Label text="Tenure (months)"><input required inputMode="numeric" value={tenure} onChange={(e) => setTenure(num(e.target.value))} className={field} placeholder="60" /></Label>
+            </div>
+            {loanCalcOn && calculatedEmi > 0 && <p className="rounded-xl bg-soft p-3 text-sm">Estimated EMI <b>₹{inr(calculatedEmi)}</b> · total repayment <b>₹{inr(calculatedEmi * months)}</b> · interest <b>₹{inr(calculatedEmi * months - Number(loanPrincipal))}</b></p>}
+          </div>
         )}
+        {(kind === "FD" || kind === "RD") && <div className="col-span-2 space-y-3 rounded-2xl border border-line p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Label text="Annual interest %"><input required inputMode="decimal" value={annualRate} onChange={(e) => setAnnualRate(num(e.target.value))} className={field} placeholder="e.g. 7.1" /></Label>
+            <Label text="Term (months)"><input required inputMode="numeric" value={tenure} onChange={(e) => setTenure(num(e.target.value))} className={field} placeholder="e.g. 12" /></Label>
+            <Label text="Bank / issuer"><input value={institution} onChange={(e) => setInstitution(e.target.value)} className={field} placeholder="e.g. SBI" /></Label>
+            <Label text="Deposit product"><input value={product} onChange={(e) => setProduct(e.target.value)} className={field} placeholder="e.g. Special TD" /></Label>
+            <Label text="Compounding"><select value={compoundingFrequency} onChange={(e) => setCompoundingFrequency(e.target.value as NonNullable<Recurring["compoundingFrequency"]>)} className={field}>
+              <option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="half-yearly">Half-yearly</option><option value="yearly">Yearly</option>
+            </select></Label>
+            <Label text="Interest paid"><select value={payoutFrequency} onChange={(e) => setPayoutFrequency(e.target.value as NonNullable<Recurring["payoutFrequency"]>)} className={field}>
+              <option value="maturity">At maturity / cumulative</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="half-yearly">Half-yearly</option><option value="yearly">Yearly</option>
+            </select></Label>
+            <Label text="Maturity date (from receipt)"><input type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} className={field} /></Label>
+            <Label text="Maturity amount ₹ (from receipt)"><input inputMode="decimal" value={maturityAmount} onChange={(e) => setMaturityAmount(num(e.target.value))} className={field} placeholder="Optional exact amount" /></Label>
+            <Label wide text="On maturity"><select value={maturityInstruction} onChange={(e) => setMaturityInstruction(e.target.value as NonNullable<Recurring["maturityInstruction"]>)} className={field}>
+              <option value="credit">Credit to linked bank</option><option value="renew-principal">Renew principal</option><option value="renew-principal-interest">Renew principal + interest</option>
+            </select></Label>
+          </div>
+          {months > 0 && rate >= 0 && <p className="rounded-xl bg-soft p-3 text-sm">Estimated maturity value <b>₹{inr(Number(maturityAmount) || (kind === "FD" ? fdMaturity(Number(amount), rate, months, compoundingFrequency, payoutFrequency) : rdMaturity(Number(amount), rate, months, compoundingFrequency, payoutFrequency)))}</b> · matures <b>{(maturityDate ? new Date(`${maturityDate}T00:00:00`) : estimatedMaturityDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</b> · {maturityAmount ? "receipt amount" : `${compoundingFrequency} estimate`}</p>}
+          <p className="text-[11px] text-ink3">Use the rate, payout and maturity details from your deposit receipt. Periodic interest is paid out and is not included in the deposit balance estimate.</p>
+        </div>}
         {kind === "Subscription" && (
           <Label wide text="Billing">
             <select value={yearly ? "y" : "m"} onChange={(e) => setYearly(e.target.value === "y")} className={field}>

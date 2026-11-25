@@ -84,7 +84,7 @@ export function CardDuesCard({ i, cards, txns, now, onManage, onPay }: {
                 {(r.cycle || r.rewards !== null) && (
                   <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-ink2">
                     {r.cycle && <span>This bill so far <b>{fmt(r.cycleSpend ?? 0)}</b> · statement {r.statementIn === 0 ? "today" : `in ${r.statementIn}d`}</span>}
-                    {r.rewards !== null && <span>Rewards this month ≈ <b className="text-pop-green">{fmt(r.rewards)}</b></span>}
+                    {r.rewards !== null && <span>Rewards this month (est.) <b className="text-pop-green">{fmt(r.rewards)}</b></span>}
                   </div>
                 )}
                 {r.due > 0 && <button onClick={() => onPay(r.name, r.due)} className="mt-1.5 rounded-full bg-ink px-3 py-1 text-[11px] font-bold text-card">Pay bill</button>}

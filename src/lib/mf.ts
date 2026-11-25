@@ -1,4 +1,4 @@
-import { paysFor, type Recurring, type Txn } from "./data";
+import { monthsBetween, paysFor, type Recurring, type Txn } from "./data";
 import { NAV_TTL_MS, PORTFOLIO_MONTHS, STORAGE } from "./config";
 import { DAY, ymd } from "./dates";
 
@@ -29,6 +29,43 @@ export type Holding = {
   rec: Recurring; name: string; units: number; invested: number; value: number;
   gain: number; gainPct: number; dayChange: number; navDate: string;
 };
+
+export type FixedIncomeHolding = { rec?: Recurring; name: string; kind: "FD" | "RD"; annualRate: number; tenure: number; invested: number; value: number; maturity: Date; institution?: string; product?: string; compoundingFrequency?: Recurring["compoundingFrequency"]; payoutFrequency?: Recurring["payoutFrequency"]; maturityAmount?: number; maturityInstruction?: Recurring["maturityInstruction"] };
+
+const periodsPerYear = (frequency: Recurring["compoundingFrequency"] = "quarterly") => ({ monthly: 12, quarterly: 4, "half-yearly": 2, yearly: 1 })[frequency];
+const futureValue = (principal: number, annualRate: number, months: number, frequency: Recurring["compoundingFrequency"] = "quarterly") => {
+  const periods = periodsPerYear(frequency);
+  return principal * (1 + annualRate / (100 * periods)) ** (months * periods / 12);
+};
+
+/** Estimate current FD/RD value using each recorded deposit and its stored annual rate. */
+export function fixedIncomeHoldings(recurring: Recurring[], txns: Txn[], now: Date): FixedIncomeHolding[] {
+  const recurringHoldings = recurring.filter((r) => (r.kind === "FD" || r.kind === "RD") && r.annualRate !== undefined && r.tenure)
+    .map((rec) => {
+      const deposits = txns.filter((t) => t.type === "invest" && paysFor(t, rec) && t.date <= now);
+      const invested = deposits.reduce((sum, t) => sum + t.amount, 0);
+      const maturity = rec.maturityDate ?? new Date(rec.start.getFullYear(), rec.start.getMonth() + rec.tenure! - (rec.kind === "RD" ? 1 : 0), rec.day);
+      const value = deposits.reduce((sum, t) => {
+        const age = Math.max(0, Math.min(rec.tenure!, monthsBetween(t.date, now)));
+        return sum + (rec.payoutFrequency && rec.payoutFrequency !== "maturity" ? t.amount : futureValue(t.amount, rec.annualRate!, age, rec.compoundingFrequency));
+      }, 0);
+      const matured = now >= maturity;
+      return { rec, name: rec.name, kind: rec.kind as "FD" | "RD", annualRate: rec.annualRate!, tenure: rec.tenure!, invested,
+        value: Math.round((matured && rec.maturityAmount !== undefined ? rec.maturityAmount : value) * 100) / 100, maturity,
+        institution: rec.institution, product: rec.product, compoundingFrequency: rec.compoundingFrequency, payoutFrequency: rec.payoutFrequency, maturityAmount: rec.maturityAmount, maturityInstruction: rec.maturityInstruction };
+    }).filter((h) => h.invested > 0);
+  const oneTime = txns.filter((t) => t.type === "invest" && (t.category === "FD" || t.category === "RD") && t.annualRate !== undefined && t.tenureMonths && !t.recurringId && t.date <= now)
+    .map((t) => {
+      const age = Math.max(0, Math.min(t.tenureMonths!, monthsBetween(t.date, now)));
+      const maturity = t.maturityDate ?? new Date(t.date.getFullYear(), t.date.getMonth() + t.tenureMonths! - (t.category === "RD" ? 1 : 0), t.date.getDate());
+      const value = t.payoutFrequency && t.payoutFrequency !== "maturity" ? t.amount : futureValue(t.amount, t.annualRate!, age, t.compoundingFrequency);
+      const matured = now >= maturity;
+      return { name: t.merchant || t.category, kind: t.category as "FD" | "RD", annualRate: t.annualRate!, tenure: t.tenureMonths!, invested: t.amount,
+        maturity, institution: t.institution, product: t.product, compoundingFrequency: t.compoundingFrequency, payoutFrequency: t.payoutFrequency, maturityAmount: t.maturityAmount,
+        maturityInstruction: t.maturityInstruction, value: Math.round((matured && t.maturityAmount !== undefined ? t.maturityAmount : value) * 100) / 100 };
+    });
+  return [...recurringHoldings, ...oneTime];
+}
 
 const linked = (r: Recurring, navs: Record<number, NavSeries>) => r.kind === "SIP" && !!r.schemeCode && !!navs[r.schemeCode];
 const payments = (r: Recurring, txns: Txn[]) => txns.filter((t) => t.type === "invest" && paysFor(t, r));

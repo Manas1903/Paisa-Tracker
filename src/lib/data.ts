@@ -12,6 +12,18 @@ export type Txn = {
   mode: Mode;
   recurringId?: string; // set when this payment belongs to an EMI/SIP/bill/…
   account?: string; // credit card this spend / bill payment belongs to
+  annualRate?: number; // optional annual yield for a one-time FD/RD deposit
+  tenureMonths?: number; // optional deposit term for a one-time FD/RD entry
+  institution?: string;
+  product?: string;
+  compoundingFrequency?: "monthly" | "quarterly" | "half-yearly" | "yearly";
+  payoutFrequency?: "maturity" | "monthly" | "quarterly" | "half-yearly" | "yearly";
+  maturityAmount?: number; // actual amount from the deposit receipt, if known
+  maturityDate?: Date; // actual date from the deposit receipt, if known
+  maturityInstruction?: "credit" | "renew-principal" | "renew-principal-interest";
+  stockSymbol?: string; // exchange-qualified symbol, e.g. NSE:RELIANCE
+  stockQuantity?: number; // shares bought in this lot
+  stockUnitPrice?: number; // purchase price per share for this lot
   split?: SplitShare[]; // friends' shares of a bill you paid; `amount` is your share
 };
 
@@ -20,11 +32,11 @@ export type SplitShare = { name: string; amount: number; settled: boolean };
 /** Spend on a credit card: counts as spending now, leaves the bank only when the bill is paid. */
 export const isCardSpend = (t: Txn) => t.type === "expense" && (t.mode === "Card" || !!t.account);
 
-export type RewardRule = { match: string; rate: number }; // match = merchant/category keywords, e.g. "swiggy"; rate in %
+export type RewardRule = { match: string; rate: number; capPerMonth?: number; fallbackToBase?: boolean }; // cap = maximum ₹ earned by this rule per billing cycle
 export type CreditCard = {
   name: string; limit?: number; dueDay?: number;
   statementDay?: number; // day the bill is generated: spends after it go to the next bill
-  rewards?: { base: number; bonus?: RewardRule[] }; // % value back
+  rewards?: { base: number; bonus?: RewardRule[]; exclude?: string; baseCapPerMonth?: number; spendCapPerMonth?: number; minTransaction?: number; roundPerTransaction?: boolean }; // % value back; exclude = keywords earning 0
 };
 export type CreditScore = { date: string; score: number; bureau?: string };
 
@@ -47,8 +59,8 @@ export const colorOf = (cat: string, dark: boolean) => {
 };
 export const displayCategory = (cat: string) => (CATEGORIES.some((c) => c.name === cat) ? cat : "Other");
 
-export type RecurringKind = "Salary" | "EMI" | "SIP" | "Subscription" | "Bill" | "Rent";
-export const RECURRING_KINDS: RecurringKind[] = ["Salary", "EMI", "SIP", "Subscription", "Bill", "Rent"];
+export type RecurringKind = "Salary" | "EMI" | "SIP" | "FD" | "RD" | "Subscription" | "Bill" | "Rent";
+export const RECURRING_KINDS: RecurringKind[] = ["Salary", "EMI", "SIP", "FD", "RD", "Subscription", "Bill", "Rent"];
 
 export type Recurring = {
   id?: string;
@@ -60,7 +72,16 @@ export type Recurring = {
   day: number; // day of month it hits (clamped to month length)
   month?: number; // 0-11, only for yearly items
   start: Date;
-  tenure?: number; // total months, EMIs only
+  tenure?: number; // total months, for EMIs and FD/RD terms
+  annualRate?: number; // annual interest rate for loans, FDs and RDs
+  loanPrincipal?: number; // original principal, for calculated EMI loans
+  institution?: string;
+  product?: string;
+  compoundingFrequency?: "monthly" | "quarterly" | "half-yearly" | "yearly";
+  payoutFrequency?: "maturity" | "monthly" | "quarterly" | "half-yearly" | "yearly";
+  maturityAmount?: number;
+  maturityDate?: Date;
+  maturityInstruction?: "credit" | "renew-principal" | "renew-principal-interest";
   variable?: number; // demo only: +/- fraction, e.g. electricity
   schemeCode?: number; // SIPs: AMFI scheme code, for live NAV
   schemeName?: string;
@@ -75,6 +96,7 @@ export type Layout = { order: string[]; hidden: string[] };
 export type Book = {
   txns: Txn[]; recurring: Recurring[]; goals: Goal[]; openingBalance: number; started?: boolean; layout?: Layout;
   cards?: CreditCard[];
+  stockQuotes?: Record<string, { price: number; updatedAt: string }>;
   budgets?: Record<string, number>; // monthly limit per category
   creditScores?: CreditScore[];
   salaryCutoff?: number | null; // salary on/after this day of month counts for the next month (null = off)
@@ -91,7 +113,7 @@ export function forMonthMaths(txns: Txn[], cutoff: number | null | undefined): T
 /** Type and category follow from the kind, so the form only asks for the kind. */
 export function kindDefaults(kind: RecurringKind, name: string): Pick<Recurring, "type" | "category"> {
   if (kind === "Salary") return { type: "income", category: "Salary" };
-  if (kind === "SIP") return { type: "invest", category: name };
+  if (kind === "SIP" || kind === "FD" || kind === "RD") return { type: "invest", category: kind === "SIP" ? name : kind };
   return { type: "expense", category: { EMI: "EMI", Subscription: "Subscriptions", Bill: "Bills", Rent: "Rent" }[kind] };
 }
 
@@ -113,6 +135,7 @@ function activeMonth(r: Recurring, d: Date) {
 
 export function nextDue(r: Recurring, now: Date): Date | null {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (r.kind === "FD") return r.start >= today ? dueIn(r.start.getFullYear(), r.start.getMonth(), r.day) : null;
   const from = r.start > today ? r.start : today; // items starting far ahead: search from their start
   for (let i = 0; i < 13; i++) {
     const d = dueIn(from.getFullYear(), from.getMonth() + i, r.day);
@@ -121,6 +144,32 @@ export function nextDue(r: Recurring, now: Date): Date | null {
     return activeMonth(r, d) === null ? null : d; // null = EMI finished
   }
   return null;
+}
+
+/** Standard reducing-balance EMI, rounded to paise. A zero-rate loan is principal / months. */
+export function calculateEmi(principal: number, annualRate: number, months: number): number {
+  if (!(principal > 0) || !(months > 0)) return 0;
+  const monthly = annualRate / 1200;
+  const payment = monthly === 0 ? principal / months : principal * monthly * (1 + monthly) ** months / ((1 + monthly) ** months - 1);
+  return Math.round(payment * 100) / 100;
+}
+
+const periodsPerYear = (frequency: Recurring["compoundingFrequency"] = "quarterly") => ({ monthly: 12, quarterly: 4, "half-yearly": 2, yearly: 1 })[frequency];
+
+/** Indicative FD maturity calculator; payout plans send interest out instead of compounding it. */
+export function fdMaturity(principal: number, annualRate: number, months: number, frequency: Recurring["compoundingFrequency"] = "quarterly", payout: Recurring["payoutFrequency"] = "maturity"): number {
+  if (payout !== "maturity") return Math.round(principal * 100) / 100;
+  const periods = periodsPerYear(frequency);
+  return Math.round(principal * (1 + annualRate / (100 * periods)) ** (months * periods / 12) * 100) / 100;
+}
+
+/** Indicative RD value from month-end installments with the selected annual compounding frequency. */
+export function rdMaturity(monthlyDeposit: number, annualRate: number, months: number, frequency: Recurring["compoundingFrequency"] = "quarterly", payout: Recurring["payoutFrequency"] = "maturity"): number {
+  if (payout !== "maturity") return Math.round(monthlyDeposit * months * 100) / 100;
+  const periods = periodsPerYear(frequency), factor = 1 + annualRate / (100 * periods);
+  let value = 0;
+  for (let i = 0; i < months; i++) value += monthlyDeposit * factor ** (Math.max(0, months - 1 - i) * periods / 12);
+  return Math.round(value * 100) / 100;
 }
 
 /** Date of the last EMI. */
@@ -147,6 +196,8 @@ export function demoRecurring(now: Date): Recurring[] {
     R("Nifty 50 Index", "SIP", 10000, 7, 30, { schemeCode: 120716, schemeName: "UTI Nifty 50 Index Fund - Direct Plan - Growth" }),
     R("Flexi Cap", "SIP", 5000, 7, 30, { schemeCode: 122639, schemeName: "Parag Parikh Flexi Cap Fund - Direct Plan - Growth" }),
     R("ELSS", "SIP", 3000, 10, 8, { schemeCode: 135781, schemeName: "Mirae Asset ELSS Tax Saver Fund - Direct Plan - Growth" }),
+    R("Demo fixed deposit", "FD", 75000, 20, 13, { tenure: 24, annualRate: 7.1 }),
+    R("Demo recurring deposit", "RD", 3000, 10, 4, { tenure: 18, annualRate: 6.5 }),
     R("Netflix", "Subscription", 649, 12, 40),
     R("Spotify", "Subscription", 119, 20, 40),
     R("YouTube Premium", "Subscription", 149, 22, 14),
@@ -204,6 +255,17 @@ export function demoBook(now = new Date()): Book {
   // Card spends go on one demo card; its bill is paid from the bank on the 10th of the next month.
   const DEMO_CARD = "Demo Card";
   const txns = generateFakeData(now, recurring).map((t) => (t.mode === "Card" && t.type === "expense" ? { ...t, account: DEMO_CARD } : t));
+  // Fake current-cycle spend uses most of the HDFC Swiggy app cashback cap,
+  // so the live preview demonstrates a cap-aware recommendation on the next purchase.
+  const capDemoDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 5, 12);
+  txns.push({ id: "demo-swiggy-cap", date: capDemoDate, amount: 14500, type: "expense", category: "Food", merchant: "Swiggy", mode: "Card", account: "HDFC Swiggy" });
+  // Clearly synthetic stock lots and quotes for the local preview portfolio.
+  const buyDate = (monthsAgo: number, day = 12) => new Date(now.getFullYear(), now.getMonth() - monthsAgo, day, 12);
+  txns.push(
+    { id: "demo-stock-reliance-1", date: buyDate(9), amount: 25000, type: "invest", category: "Stocks", merchant: "Reliance Industries", mode: "NetBanking", stockSymbol: "NSE:RELIANCE", stockQuantity: 20, stockUnitPrice: 1250 },
+    { id: "demo-stock-reliance-2", date: buyDate(4, 18), amount: 12800, type: "invest", category: "Stocks", merchant: "Reliance Industries", mode: "NetBanking", stockSymbol: "NSE:RELIANCE", stockQuantity: 10, stockUnitPrice: 1280 },
+    { id: "demo-stock-tcs-1", date: buyDate(6, 8), amount: 18000, type: "invest", category: "Stocks", merchant: "Tata Consultancy Services", mode: "NetBanking", stockSymbol: "NSE:TCS", stockQuantity: 5, stockUnitPrice: 3600 },
+  );
   const byMonth = new Map<string, number>();
   for (const t of txns) if (t.account === DEMO_CARD) byMonth.set(`${t.date.getFullYear()}-${t.date.getMonth()}`, (byMonth.get(`${t.date.getFullYear()}-${t.date.getMonth()}`) ?? 0) + t.amount);
   for (const [k, amt] of byMonth) {
@@ -218,7 +280,12 @@ export function demoBook(now = new Date()): Book {
   const monthsBack = (n: number) => new Date(now.getFullYear(), now.getMonth() - n, 5).toLocaleDateString("en-CA");
   return {
     txns, recurring, goals: demoGoals(), openingBalance: 150000, salaryCutoff: DEFAULT_SALARY_CUTOFF,
-    cards: [{ name: DEMO_CARD, limit: 200000, dueDay: 10, statementDay: 22, rewards: { base: 1, bonus: [{ match: "amazon|flipkart", rate: 5 }] } }],
+    cards: [
+      { name: DEMO_CARD, limit: 200000, dueDay: 10, statementDay: 22, rewards: { base: 1, bonus: [{ match: "amazon|flipkart", rate: 5 }] } },
+      // Brochure-backed demo card to make the cap-aware recommendation visible in preview.
+      { name: "HDFC Swiggy", limit: 150000, dueDay: 5, statementDay: 18 },
+    ],
+    stockQuotes: { "NSE:RELIANCE": { price: 1420, updatedAt: now.toISOString() }, "NSE:TCS": { price: 3850, updatedAt: now.toISOString() } },
     budgets: demoBudgets(txns, now),
     creditScores: [{ date: monthsBack(5), score: 742, bureau: "CIBIL" }, { date: monthsBack(3), score: 751, bureau: "CIBIL" }, { date: monthsBack(1), score: 763, bureau: "CIBIL" }],
   };
@@ -253,6 +320,7 @@ function generateFakeData(now: Date, recurring: Recurring[], days = 760): Txn[] 
 
     for (const rec of recurring) {
       if (day.getTime() !== dueIn(day.getFullYear(), day.getMonth(), rec.day).getTime()) continue;
+      if (rec.kind === "FD" && (day.getFullYear() !== rec.start.getFullYear() || day.getMonth() !== rec.start.getMonth())) continue;
       if ((rec.month !== undefined && day.getMonth() !== rec.month) || activeMonth(rec, day) === null) continue;
       const raise = rec.kind === "Salary" && yearsAgo > 1 ? 0.88 : 1; // last appraisal ~1y ago
       const jitter = rec.variable ? 1 + (r() * 2 - 1) * rec.variable : 1;

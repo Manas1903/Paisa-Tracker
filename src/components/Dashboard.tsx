@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CATEGORIES, colorOf, displayCategory, emisPaid, forMonthMaths, lastEmi, nextDue, type Book, type Goal, type Layout, type Recurring, type Txn } from "@/lib/data";
+import { CATEGORIES, colorOf, displayCategory, emisPaid, forMonthMaths, isCardSpend, lastEmi, nextDue, type Book, type Goal, type Layout, type Recurring, type Txn } from "@/lib/data";
 import { addGoal, addRecurring, addTxn, addTxns, deleteRow, saveLayout, saveSettings, setOpeningBalance, supabase, updateGoal, updateRecurring, updateTxn } from "@/lib/store";
 import { BalanceForm, GoalForm, RecurringForm } from "@/components/sheets/Forms";
 import { fmt, fmtDate, fmtShort } from "@/lib/format";
@@ -18,6 +18,7 @@ import { QuickAdd } from "@/components/sheets/QuickAdd";
 import { Game } from "@/components/cards/Game";
 import { ComingUp, dueItems, paidAt } from "@/components/cards/ComingUp";
 import { PortfolioCard } from "@/components/cards/Portfolio";
+import { StockMarketCard } from "@/components/cards/StockMarket";
 import { BankCard, CardDuesCard } from "@/components/cards/Bank";
 import { PaymentsCard } from "@/components/cards/Payments";
 import { BudgetsCard } from "@/components/cards/Budgets";
@@ -31,7 +32,8 @@ import { SettingsSheet } from "@/components/sheets/Settings";
 import { CardChip } from "@/components/ui/CardChip";
 import { ImportSheet } from "@/components/sheets/ImportSheet";
 import { CustomizeSheet, arrange } from "@/components/sheets/Customize";
-import { holdings as mfHoldings, loadNav, portfolioSeries, type NavSeries } from "@/lib/mf";
+import { fixedIncomeHoldings, holdings as mfHoldings, loadNav, portfolioSeries, type NavSeries } from "@/lib/mf";
+import { stockPositions } from "@/lib/stocks";
 import { BadgesCard, Celebration, ChallengesCard, FireCard, GoalsCard, LevelCard, NetWorthCard, Reframes, ReportCard, StreaksCard } from "@/components/cards/Motivation";
 import { Bar, Card, Chip, Empty, Tile, type Pop } from "@/components/ui/primitives";
 import { STORAGE } from "@/lib/config";
@@ -42,7 +44,7 @@ import {
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const KIND_STYLE: Record<string, string> = {
-  Salary: "bg-pop-green text-white", EMI: "bg-pop-blue text-white", SIP: "bg-pop-purple text-white",
+  Salary: "bg-pop-green text-white", EMI: "bg-pop-blue text-white", SIP: "bg-pop-purple text-white", FD: "bg-pop-green text-white", RD: "bg-pop-blue text-white",
   Subscription: "bg-pop-pink text-white", Bill: "bg-pop-yellow text-black", Rent: "bg-pop-orange text-white",
 };
 
@@ -122,14 +124,24 @@ export default function Dashboard({ book, setBook, email, onReset }: {
     series: portfolioSeries(recurring, txns, navs, now),
     unlinked: recurring.filter((x) => x.kind === "SIP" && !x.schemeCode).length,
   }), [recurring, txns, navs, now]);
+  const fixedIncome = useMemo(() => fixedIncomeHoldings(recurring, rawTxns, now), [recurring, rawTxns, now]);
+  const stocks = useMemo(() => stockPositions(rawTxns, book.stockQuotes ?? {}, now), [rawTxns, book.stockQuotes, now]);
 
   // ---- motivation ----
   const mot = useMemo(() => {
     const s = streaks(txns, now);
-    const mfNow = mf.holdings.length ? { value: mf.holdings.reduce((a, h) => a + h.value, 0), invested: mf.holdings.reduce((a, h) => a + h.invested, 0) } : undefined;
+    const stockValue = stocks.reduce((a, h) => a + (h.value ?? h.invested), 0);
+    const stockInvested = stocks.reduce((a, h) => a + h.invested, 0);
+    const mfNow = mf.holdings.length || fixedIncome.length || stocks.length ? {
+      value: mf.holdings.reduce((a, h) => a + h.value, 0) + fixedIncome.reduce((a, h) => a + h.value, 0) + stockValue,
+      invested: mf.holdings.reduce((a, h) => a + h.invested, 0) + fixedIncome.reduce((a, h) => a + h.invested, 0) + stockInvested,
+    } : undefined;
     const nw = netWorth(book, now, undefined, mfNow);
     const nwNow = nw[nw.length - 1].value;
-    const mfTotals = mf.holdings.length ? mf.holdings.reduce((a, h) => ({ value: a.value + h.value, gain: a.gain + h.gain }), { value: 0, gain: 0 }) : undefined;
+    const mfTotals = mf.holdings.length || stocks.length ? {
+      value: mf.holdings.reduce((a, h) => a + h.value, 0) + stocks.reduce((a, h) => a + (h.value ?? h.invested), 0),
+      gain: mf.holdings.reduce((a, h) => a + h.gain, 0) + stocks.reduce((a, h) => a + (h.gain ?? 0), 0),
+    } : undefined;
     const b = badges(book, now, s, nwNow, mfTotals);
     return {
       s, nw, b,
@@ -141,7 +153,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
       ch: challenges(txns, now, s, cardUtilisation(book)),
       lines: reframes(book, now),
     };
-  }, [book, txns, now, mf.holdings]);
+  }, [book, txns, now, mf.holdings, fixedIncome, stocks]);
 
   const [celebrate, setCelebrate] = useState(false);
   useEffect(() => {
@@ -158,7 +170,25 @@ export default function Dashboard({ book, setBook, email, onReset }: {
   const cats = [...CATEGORIES.map((c) => c.name), "Other"];
   const byCat = useMemo(() => groupBy(txns, "expense", r.curStart, r.now, (t) => displayCategory(t.category)), [txns, r]);
   const byCatPrev = useMemo(() => groupBy(txns, "expense", r.prevStart, r.prevSameTime, (t) => displayCategory(t.category)), [txns, r]);
-  const slices: Slice[] = cats.filter((c) => byCat.get(c)).map((c) => ({ name: c, value: byCat.get(c)!, color: colorOf(c, dark) }));
+  // This chart is a cash-outflow view: card purchases move here when their bill is paid,
+  // so the same rupee is never shown once at swipe and again at repayment.
+  const outflows = useMemo(() => {
+    const sums = new Map<string, number>();
+    for (const t of txns) {
+      if (!inRange(t, r.curStart, r.now)) continue;
+      let name: string | null = null;
+      if (t.type === "expense" && !isCardSpend(t)) name = displayCategory(t.category);
+      else if (t.type === "transfer") name = "Card bills";
+      else if (t.type === "invest") name = "Investments";
+      if (name) sums.set(name, (sums.get(name) ?? 0) + t.amount);
+    }
+    const fixed = new Set(cats);
+    return [...sums].map(([name, value]) => ({
+      name, value, color: name === "Card bills" ? (dark ? "#ff9f43" : "#c45d12")
+        : name === "Investments" ? (dark ? "#b9f26a" : "#56820e") : colorOf(fixed.has(name) ? name : "Other", dark),
+    })).sort((a, b) => b.value - a.value);
+  }, [txns, r, dark]);
+  const slices: Slice[] = outflows;
   const spentTotal = slices.reduce((s, x) => s + x.value, 0);
 
   const trend = useMemo(
@@ -235,7 +265,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
     return heatmapOption(T, days, ymd(from), ymd(now));
   }, [T, mot.s.daily, now]);
 
-  const commitments = (["EMI", "SIP", "Subscription", "Bill"] as const).map((k) => ({
+  const commitments = (["EMI", "SIP", "RD", "Subscription", "Bill"] as const).map((k) => ({
     kind: k,
     amount: recurring.filter((x) => x.kind === k && nextDue(x, now)).reduce((s, x) => s + (x.month === undefined ? x.amount : x.amount / 12), 0),
   }));
@@ -248,6 +278,10 @@ export default function Dashboard({ book, setBook, email, onReset }: {
   const recent = matching.slice(0, showN);
 
   async function add(t: Txn): Promise<boolean> {
+    if (email === "preview@local") {
+      setBook((b) => ({ ...b, txns: [...b.txns, t] }));
+      return true;
+    }
     try {
       const saved = await addTxn(t);
       setBook((b) => ({ ...b, txns: [...b.txns, saved] }));
@@ -307,6 +341,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
     catch (e) { fail(e); throw e; }
   }
   async function saveCardsSettings(st: Parameters<typeof saveSettings>[0]) {
+    if (email === "preview@local") { setBook((b) => ({ ...b, ...st })); flash("Saved to this preview"); return; }
     try { await saveSettings(st); setBook((b) => ({ ...b, ...st })); flash("Saved"); }
     catch (e) { fail(e); throw e; }
   }
@@ -386,7 +421,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
             </Card>
     ) },
     { key: "where", title: "Where it went", node: (
-            <Card i={1} title="Where it went" subtitle={`This ${period}`} icon={<PieChart size={16} />} pop="pink">
+            <Card i={1} title="Where it went" subtitle={`Cash outflow this ${period} · card purchases count when the bill is paid`} icon={<PieChart size={16} />} pop="pink">
               <div className="relative">
                 <Chart option={donutOption(T, slices)} height={190} />
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -395,7 +430,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
                 </div>
               </div>
               <ul className="mt-3 space-y-1.5 text-sm">
-                {slices.slice().sort((a, b) => b.value - a.value).slice(0, 6).map((s) => (
+                {slices.map((s) => (
                   <li key={s.name} className="flex items-center gap-2">
                     <span className="h-3 w-3 rounded-[4px]" style={{ background: s.color }} />
                     <span className="flex-1 text-ink2">{s.name}</span>
@@ -426,7 +461,8 @@ export default function Dashboard({ book, setBook, email, onReset }: {
     { key: "coming", title: "Coming up", node: (
             <Card i={3} title="Coming up" subtitle={overdue ? `${overdue} due now · next 30 days` : "Next 30 days"} icon={<CalendarClock size={16} />} pop="yellow">
               <ComingUp items={upcoming} now={now} onPay={(u, amount) => {
-                return add({ id: crypto.randomUUID(), date: paidAt(u.due, new Date()), amount, type: u.type, category: u.category, merchant: u.name, mode: "AutoPay", recurringId: u.id });
+                return add({ id: crypto.randomUUID(), date: paidAt(u.due, new Date()), amount, type: u.type, category: u.category, merchant: u.name, mode: "AutoPay", recurringId: u.id,
+                  annualRate: u.kind === "FD" || u.kind === "RD" ? u.annualRate : undefined, tenureMonths: u.kind === "FD" || u.kind === "RD" ? u.tenure : undefined });
               }} />
             </Card>
     ) },
@@ -461,7 +497,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
                       <div className="mb-1.5 flex justify-between text-sm"><span>{e.name}</span><span className="tabular-nums text-ink3">{paid}/{e.tenure}</span></div>
                       <Bar pct={paid / e.tenure!} className="bg-gradient-to-r from-pop-blue to-pop-green" />
                       <div className="mt-1 flex justify-between text-[11px] text-ink3">
-                        <span>{fmt(e.amount)}/mo · {fmt((e.tenure! - paid) * e.amount)} left</span>
+                        <span>{fmt(e.amount)}/mo · {fmt(e.amount * e.tenure!)} total{e.loanPrincipal ? ` · ${fmt(e.loanPrincipal)} principal · ${fmt(e.amount * e.tenure! - e.loanPrincipal)} interest` : ""}{e.annualRate !== undefined ? ` · ${e.annualRate}% p.a.` : ""}</span>
                         <span>ends {end.toLocaleDateString("en-IN", { month: "short", year: "numeric" })}</span>
                       </div>
                     </button>
@@ -477,7 +513,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
                         <button onClick={() => { setEditRec(x); setForm("recurring"); }} className="flex w-full items-center gap-2 py-2 text-left text-sm active:bg-soft">
                           <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${KIND_STYLE[x.kind]}`}>{x.kind === "Subscription" ? "Sub" : x.kind}</span>
                           <span className="min-w-0 flex-1 truncate">{x.name}</span>
-                          <span className={`font-semibold tabular-nums ${x.type === "income" ? "text-pop-green" : ""}`}>{fmt(x.amount)}<span className="font-normal text-ink3">/{x.month === undefined ? "mo" : "yr"}</span></span>
+                          <span className={`font-semibold tabular-nums ${x.type === "income" ? "text-pop-green" : ""}`}>{fmt(x.amount)}<span className="font-normal text-ink3">/{x.kind === "FD" ? "once" : x.month === undefined ? "mo" : "yr"}</span></span>
                         </button>
                       </li>
                     ))}
@@ -506,6 +542,25 @@ export default function Dashboard({ book, setBook, email, onReset }: {
     { key: "portfolio", title: "Mutual fund portfolio", node: (
             <PortfolioCard T={T} i={0} className="lg:col-span-3" holdings={mf.holdings} series={mf.series}
               loading={codes.some((c) => !navs[c]) && !navErr} error={navErr} unlinked={mf.unlinked} />
+    ) },
+    { key: "stockMarket", title: "Stocks", node: (
+      <StockMarketCard positions={stocks} quotes={book.stockQuotes ?? {}} dark={dark} demo={email === "preview@local"} onSaveQuote={(symbol, price, updatedAt) => saveCardsSettings({ stockQuotes: { ...(book.stockQuotes ?? {}), [symbol]: { price, updatedAt: updatedAt ?? new Date().toISOString() } } })} i={1} />
+    ) },
+    { key: "fixedIncome", title: "FD / RD portfolio", node: (
+      <Card i={1} className="lg:col-span-2" title="FD & RD portfolio" subtitle="Estimated from saved terms · receipt maturity values take priority" icon={<Landmark size={16} />} pop="green">
+        {!fixedIncome.length ? <Empty>Add an FD or RD from Monthly commitments → + Add recurring.</Empty> : <ul className="divide-y divide-line">
+          {fixedIncome.map((holding) => {
+            const daysToMaturity = Math.ceil((new Date(holding.maturity.getFullYear(), holding.maturity.getMonth(), holding.maturity.getDate()).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / DAY);
+            return <li key={holding.rec?.id ?? `${holding.name}-${holding.maturity.getTime()}`} className="flex items-center gap-3 py-3">
+            <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{holding.name} <span className="text-ink3">· {holding.kind}</span></div>
+              <div className="text-xs text-ink3">{[holding.institution, holding.product].filter(Boolean).join(" · ") || `${holding.annualRate}% p.a.`} · {holding.tenure} months · matures {holding.maturity.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</div>
+              <div className="text-[11px] text-ink3">{holding.payoutFrequency && holding.payoutFrequency !== "maturity" ? `${holding.payoutFrequency} interest payout` : `${holding.compoundingFrequency ?? "quarterly"} compounding`} · {holding.maturityInstruction === "renew-principal" ? "renew principal" : holding.maturityInstruction === "renew-principal-interest" ? "renew principal + interest" : "credit to bank"}{holding.maturityAmount ? ` · receipt maturity ${fmt(holding.maturityAmount)}` : ""}</div>
+              {daysToMaturity < 0 ? <span className="mt-1 inline-block rounded-full bg-soft px-2 py-0.5 text-[10px] font-bold text-ink3">Matured · update payout / renewal</span>
+                : daysToMaturity <= 30 && <span className="mt-1 inline-block rounded-full bg-pop-orange/15 px-2 py-0.5 text-[10px] font-bold text-pop-orange">Matures {daysToMaturity === 0 ? "today" : `in ${daysToMaturity}d`}</span>}</div>
+            <div className="text-right"><div className="text-sm font-bold">{fmt(holding.value)}</div><div className="text-[11px] text-ink3">{holding.payoutFrequency && holding.payoutFrequency !== "maturity" ? `${fmt(holding.invested)} principal · interest paid out separately` : `${fmt(holding.invested)} deposited · ${fmt(holding.value - holding.invested)} est. interest`}</div></div>
+          </li>; })}
+        </ul>}
+      </Card>
     ) },
     { key: "credit", title: "Credit score", node: (
       <CreditScoreCard i={1} T={T} scores={book.creditScores ?? []} onSave={(creditScores) => saveCardsSettings({ creditScores })}
@@ -609,7 +664,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
             {headline.verb}
             <br />
             <span className="relative isolate inline-block">
-              <motion.span className="absolute inset-x-[-6px] bottom-[6%] top-[38%] -z-10 -rotate-1 rounded-lg bg-pop-lime"
+              <motion.span className="absolute inset-x-[-6px] bottom-[6%] top-[38%] -z-10 -rotate-1 rounded-lg bg-[var(--headline-highlight)]"
                 initial={{ scaleX: 0 }} animate={{ scaleX: 1 }} transition={{ delay: 0.6, duration: 0.7, ease: [0.16, 1, 0.3, 1] }} style={{ originX: 0 }} />
               <Ticker value={headline.amount} format={fmt} />
             </span>
@@ -628,7 +683,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
         </button>
         <AccountMenu email={email} onReset={onReset} onBalance={() => setForm("balance")} onSettings={() => setForm("settings")} onCustomize={() => setForm("customize")}
           extras={[
-            { label: "Add reminders to calendar", icon: <CalendarPlus size={16} />, run: () => downloadIcs(remindersIcs(recurring, cards, new Date())) },
+            { label: "Add reminders to calendar", icon: <CalendarPlus size={16} />, run: () => downloadIcs(remindersIcs(recurring, cards, new Date(), rawTxns)) },
             { label: "Export to Excel", icon: <FileSpreadsheet size={16} />, run: () => exportExcel(book).catch((e) => fail(e)) },
             { label: "Print / save as PDF", icon: <Printer size={16} />, run: () => window.print() },
             { label: `${now.getFullYear()} Money Wrapped`, icon: <Sparkles size={16} />, run: () => setForm("wrapped") },
@@ -674,7 +729,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
       <QuickAdd key={editTxn?.id ?? (payPreset ? `pay-${payPreset.account}` : "new")} open={adding || !!editTxn || !!payPreset}
         onClose={() => { setAdding(false); setEditTxn(null); setPayPreset(null); }}
         editing={editTxn ?? payPreset ?? undefined} onAdd={editTxn ? saveTxnEdit : add} onDelete={editTxn ? () => removeTxn(editTxn.id) : undefined}
-        cards={cards} onAddCard={addCard} />
+        cards={cards} onAddCard={addCard} txns={rawTxns} />
       <RecurringForm key={editRec?.id ?? "new-rec"} open={form === "recurring"} onClose={closeForms} initial={editRec ?? undefined}
         pastCount={editRec ? txns.filter((t) => t.recurringId === editRec.id).length : 0}
         onSave={editRec ? saveRecEdit : (r) => saveRecurring(r)} onDelete={editRec ? () => removeRec(editRec.id!) : undefined} />

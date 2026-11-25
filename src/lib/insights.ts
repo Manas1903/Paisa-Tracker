@@ -84,7 +84,7 @@ export function fire({ txns, recurring }: Book, now: Date, mfNow?: { value: numb
   if (!yearSpend) return null;
   const target = yearSpend * 25; // 4% rule
   const invested = mfNow ? investValueAt(txns, now) - growth(mfNow.invested, txns, now) + mfNow.value : investValueAt(txns, now);
-  const sip = recurring.filter((r) => r.kind === "SIP" && nextDue(r, now)).reduce((s, r) => s + r.amount, 0);
+  const sip = recurring.filter((r) => (r.kind === "SIP" || r.kind === "RD") && nextDue(r, now)).reduce((s, r) => s + r.amount, 0);
   let v = invested, m = 0;
   while (v < target && m < 720) { v = v * (1 + ANNUAL_RETURN / 12) + sip; m++; }
   return {
