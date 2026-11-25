@@ -1,0 +1,42 @@
+{
+  "name": "paisa-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "tsx scripts/selftest.ts",
+    "check": "next typegen && tsc --noEmit && eslint && tsx scripts/selftest.ts",
+    "db:push": "supabase db push --remote",
+    "db:local": "supabase migration up --local",
+    "deploy": "npm run check && npx vercel deploy --prod"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.2",
+    "canvas-confetti": "^1.9.4",
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.1.0",
+    "lucide-react": "^1.78.0",
+    "motion": "^14.14.0",
+    "next": "16.4.6",
+    "pdfjs-dist": "6.5.438",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "4.3.3",
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.6",
+    "supabase": "^3.3.0",
+    "tailwindcss": "4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  }
+}

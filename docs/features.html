@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Paisa Tracker Features</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;900&family=Geist+Mono:wght@500&display=swap">
+<style>
+/* Layout: the app itself — off-white page, white rounded cards, black ink, lime highlight, pop-colour squircle tiles. */
+:root {
+  --page: #f3f2ee; --card: #ffffff; --soft: #f1f0ec; --line: #e8e6e0;
+  --ink: #0b0b0b; --ink2: #52514e; --ink3: #8a887f;
+  --orange: #ff6b2c; --purple: #8b5cf6; --lime: #b9f26a; --pink: #ff4f8b; --yellow: #ffc83d; --blue: #3b82f6; --green: #10b981;
+  --shadow: 0 1px 0 rgba(0,0,0,.02), 0 18px 40px -24px rgba(20,20,20,.22);
+  --display: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, monospace;
+}
+/* Light only, like the app's default look: same colours whatever the viewer's theme. */
+:root { color-scheme: light; }
+
+* { box-sizing: border-box; }
+body { background: var(--page); color: var(--ink); font-family: var(--display); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 64px; }
+.wrap { max-width: 1120px; margin: 0 auto; }
+
+/* hero */
+.hero { position: relative; display: grid; grid-template-columns: 1fr; gap: 24px; padding-block: 40px 28px; }
+@media (min-width: 900px) { .hero { grid-template-columns: 1fr 300px; align-items: center; } }
+.eyebrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--ink3); font-size: 13px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; background: var(--ink); color: var(--card); border-radius: 999px; padding: 4px 12px 4px 4px; font-weight: 600; font-size: 12px; }
+.pill b { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--lime); color: #000; font-weight: 900; font-size: 10px; }
+h1 { font-size: clamp(44px, 8vw, 84px); line-height: .95; letter-spacing: -0.045em; font-weight: 900; margin: 14px 0 0; text-wrap: balance; }
+.mark { position: relative; z-index: 0; white-space: nowrap; }
+.mark::before { content: ""; position: absolute; inset: 40% -6px 6% -6px; background: var(--lime); border-radius: 8px; transform: rotate(-1deg); z-index: -1; }
+.lede { color: var(--ink2); font-size: 17px; max-width: 58ch; margin: 16px 0 0; }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 14px; font-size: 13px; color: var(--ink2); box-shadow: var(--shadow); }
+.chip strong { color: var(--ink); }
+.shapes { position: relative; height: 240px; display: none; }
+@media (min-width: 900px) { .shapes { display: block; } }
+.s { position: absolute; }
+.s1 { width: 104px; height: 104px; border-radius: 50%; background: var(--orange); left: 10px; top: 20px; }
+.s2 { width: 120px; height: 120px; border-radius: 50%; background: var(--purple); right: 10px; top: 0; overflow: hidden; }
+.s2::after { content: ""; position: absolute; width: 104px; height: 104px; border-radius: 50%; background: var(--page); right: -22px; top: -14px; }
+.s3 { width: 150px; height: 52px; border-radius: 999px; background: var(--pink); left: 30px; bottom: 26px; transform: rotate(-12deg); }
+.s4 { width: 46px; height: 46px; border-radius: 14px; background: var(--blue); right: 18px; bottom: 60px; transform: rotate(18deg); }
+.s5 { width: 22px; height: 22px; border-radius: 50%; background: var(--ink); left: 140px; top: 140px; }
+@media (prefers-reduced-motion: no-preference) {
+  .s1 { animation: float 6s ease-in-out infinite; } .s3 { animation: float 8s ease-in-out infinite; } .s4 { animation: spin 18s linear infinite; }
+  @keyframes float { 50% { translate: 0 -12px; } } @keyframes spin { to { rotate: 360deg; } }
+}
+
+/* section heads */
+.sec { margin-top: 40px; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; margin-bottom: 14px; }
+.sec-head h2 { font-size: clamp(26px, 4vw, 36px); letter-spacing: -0.035em; font-weight: 900; margin: 0; text-wrap: balance; }
+.sec-head p { margin: 0; color: var(--ink3); font-size: 14px; }
+.tag { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; background: var(--lime); color: #000; border-radius: 6px; padding: 3px 8px; font-weight: 500; }
+.tag.dim { background: var(--soft); color: var(--ink2); }
+
+/* feature grid */
+.grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 680px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 24px; padding: 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.card.big { grid-column: 1 / -1; }
+@media (min-width: 1000px) { .card.wide { grid-column: span 2; } }
+.card-top { display: flex; align-items: center; gap: 12px; }
+.tile { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; font-weight: 900; font-size: 15px; color: #fff; }
+.t-orange { background: var(--orange); } .t-purple { background: var(--purple); } .t-pink { background: var(--pink); } .t-blue { background: var(--blue); }
+.t-green { background: var(--green); } .t-lime { background: var(--lime); color: #000; } .t-yellow { background: var(--yellow); color: #000; } .t-ink { background: var(--ink); color: var(--card); }
+.card h3 { margin: 0; font-size: 17px; letter-spacing: -0.02em; font-weight: 700; line-height: 1.25; }
+.rank { font-family: var(--mono); font-size: 11px; color: var(--ink3); }
+.card p { margin: 0; color: var(--ink2); font-size: 14px; }
+.card ul { margin: 0; padding-left: 18px; color: var(--ink2); font-size: 14px; display: grid; gap: 4px; }
+.where { margin-top: auto; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--ink3); padding-top: 4px; }
+.where span { font-family: var(--mono); background: var(--soft); color: var(--ink); border-radius: 8px; padding: 3px 8px; font-size: 11.5px; }
+
+/* mini visuals */
+.mini { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cc { position: relative; width: 56px; height: 36px; border-radius: 7px; padding: 4px; color: #fff; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; flex: none; }
+.cc::after { content: ""; position: absolute; width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,.15); right: -8px; top: -12px; }
+.cc b { font-size: 8px; font-weight: 900; line-height: 1; } .cc i { font-style: normal; font-size: 6.5px; font-weight: 600; opacity: .85; line-height: 1; }
+.flow { font-family: var(--mono); font-size: 12px; background: var(--soft); border-radius: 14px; padding: 10px 12px; color: var(--ink); line-height: 1.7; overflow-x: auto; white-space: pre; }
+.flow em { font-style: normal; color: var(--green); } .flow u { text-decoration: none; color: var(--orange); }
+.ring { width: 46px; height: 46px; flex: none; }
+.bar { height: 8px; border-radius: 99px; background: var(--soft); overflow: hidden; } .bar > div { height: 100%; border-radius: 99px; }
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+.kpi { background: var(--soft); border-radius: 14px; padding: 8px 10px; } .kpi b { display: block; font-size: 18px; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; } .kpi small { color: var(--ink3); font-size: 11px; }
+
+/* map */
+.map { display: grid; gap: 10px; grid-template-columns: 1fr; }
+@media (min-width: 760px) { .map { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+.map .card h3 { display: flex; align-items: center; gap: 10px; }
+.map .card ul { list-style: none; padding: 0; }
+.map .card li { display: flex; gap: 8px; } .map .card li::before { content: "→"; color: var(--ink3); }
+
+footer { margin-top: 48px; color: var(--ink3); font-size: 13px; display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 16px; }
+a { color: var(--ink); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="hero">
+    <div>
+      <div class="eyebrow"><span>Feature guide · 25 November 2026</span><span class="pill"><b>₹</b>Paisa Tracker</span></div>
+      <h1>Everything your money app <span class="mark">can do.</span></h1>
+      <p class="lede">What was added today comes first, most useful at the top. Below that is everything built before: the dashboard, the motivation features, the mutual fund tracker and the iPhone app.</p>
+      <div class="hero-meta">
+        <span class="chip">Live: <strong><a href="https://paisa-tracker-app.vercel.app" target="_blank" rel="noopener">paisa-tracker-app.vercel.app</a></strong></span>
+        <span class="chip">Cost <strong>₹0</strong></span>
+        <span class="chip">Data <strong>private per login</strong></span>
+      </div>
+    </div>
+    <div class="shapes" aria-hidden="true"><div class="s s1"></div><div class="s s2"></div><div class="s s3"></div><div class="s s4"></div><div class="s s5"></div></div>
+  </header>
+
+  <!-- ===================== TODAY ===================== -->
+  <section class="sec" aria-labelledby="today">
+    <div class="sec-head"><h2 id="today">Added today</h2><span class="tag">25 Nov · most useful first</span></div>
+    <div class="grid">
+
+      <article class="card wide">
+        <div class="card-top"><span class="tile t-pink">💳</span><div><div class="rank">1 · credit cards</div><h3>Credit cards, counted the right way</h3></div></div>
+        <p>A swipe counts as spending the day you swipe. Paying the bill later only moves money from your bank to the card, so it is never counted twice.</p>
+        <div class="flow">Oct  swipe SBI Pulse ₹30,000  → <u>October spending</u> · bank unchanged · card owes ₹30,000
+Nov  pay the bill ₹30,000      → <em>not spending</em> · bank −₹30,000 · card owes ₹0</div>
+        <ul>
+          <li><b>Card dues</b> per card: amount owed, % of limit (warns above 30% for your CIBIL score), days to due date, <b>Pay bill</b> button</li>
+          <li>Bank balance leaves card spends out until the bill is paid; net worth subtracts what you owe</li>
+        </ul>
+        <div class="where">Find it <span>Card dues card</span><span>＋ → Pay card bill</span><span>👤 → Cards &amp; settings</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-ink">⇪</span><div><div class="rank">2 · import</div><h3>Import bank &amp; card statements</h3></div></div>
+        <p>Upload a PDF, CSV or Excel statement. It is read on your phone only, and you check every row before anything is saved.</p>
+        <ul>
+          <li>Opens password-protected PDFs</li>
+          <li>Bank statements prove themselves: opening + credits − debits = closing, and a misread row gets flagged</li>
+          <li>Skips entries already logged, unticks refunds, saves bill payments as transfers</li>
+          <li>Learns your category fixes per merchant</li>
+        </ul>
+        <div class="where">Find it <span>＋ → Import statement</span><span>Transactions → Import</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-lime">◔</span><div><div class="rank">3 · budgets</div><h3>Monthly budgets</h3></div></div>
+        <p>A limit per category, shown as rings. Orange at 80%, red when over, plus an "ahead of pace" nudge mid-month. The form shows your 3-month average as a hint.</p>
+        <div class="mini">
+          <svg class="ring" viewBox="0 0 46 46" aria-label="Food 62%"><circle cx="23" cy="23" r="18" fill="none" stroke="var(--soft)" stroke-width="6"/><circle cx="23" cy="23" r="18" fill="none" stroke="var(--blue)" stroke-width="6" stroke-linecap="round" stroke-dasharray="113" stroke-dashoffset="43" transform="rotate(-90 23 23)"/></svg>
+          <svg class="ring" viewBox="0 0 46 46" aria-label="Shopping 86%"><circle cx="23" cy="23" r="18" fill="none" stroke="var(--soft)" stroke-width="6"/><circle cx="23" cy="23" r="18" fill="none" stroke="var(--orange)" stroke-width="6" stroke-linecap="round" stroke-dasharray="113" stroke-dashoffset="16" transform="rotate(-90 23 23)"/></svg>
+          <svg class="ring" viewBox="0 0 46 46" aria-label="Fun over budget"><circle cx="23" cy="23" r="18" fill="none" stroke="var(--pink)" stroke-width="6"/></svg>
+          <span style="font-size:12px;color:var(--ink3)">Food · Shopping · Fun (over)</span>
+        </div>
+        <div class="where">Find it <span>＋ → Set budgets</span><span>Budgets card</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-ink">＋</span><div><div class="rank">4 · one button</div><h3>The ＋ menu does everything</h3></div></div>
+        <p>The big black button opens a menu: add expense or income, import a statement, pay a card bill, add an EMI/SIP/bill, cards &amp; settings, set budgets, customize layout, and Money Wrapped.</p>
+        <div class="where">Find it <span>bottom-right ＋</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-green">₹</span><div><div class="rank">5 · salary month</div><h3>Salary counts for the right month</h3></div></div>
+        <p>Salary that arrives on or after the 25th counts for the next month, so 30 Aug pay is September's money. Spending keeps its real date. You can change the day or turn it off.</p>
+        <div class="where">Find it <span>👤 → Cards &amp; settings</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-yellow">%</span><div><div class="rank">6 · smarter cards</div><h3>Billing cycles, rewards, best card</h3></div></div>
+        <ul>
+          <li><b>This bill so far</b> and days until the statement</li>
+          <li><b>Rewards earned</b> this month per card</li>
+          <li>When adding a card spend: <b>"💡 HDFC Swiggy gives 10% back here: use it"</b></li>
+        </ul>
+        <p style="font-size:12px;color:var(--ink3)">Only HDFC Swiggy and SBI BPCL Octane come with typical rates (check your card's terms). You can add rates for the rest.</p>
+        <div class="where">Find it <span>Cards &amp; settings → statement day, rewards %</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-purple">📲</span><div><div class="rank">7 · how you pay</div><h3>UPI vs cards, month on month</h3></div></div>
+        <p>Six months of UPI vs cards vs everything else, your card share this month with the change in points, and each card's spend this month vs last.</p>
+        <div class="where">Find it <span>How you pay card</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-orange">👥</span><div><div class="rank">8 · split</div><h3>Split bills with friends</h3></div></div>
+        <p>Enter the full bill and names, and it splits equally. Only your share counts as your spending. Friends' shares show as owed to you until you tap <b>Settled</b>, and they count toward your net worth.</p>
+        <div class="where">Find it <span>Add expense → Split with friends</span><span>Friends owe you card</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-blue">◑</span><div><div class="rank">9 · CIBIL</div><h3>Credit score log</h3></div></div>
+        <p>Type in your CIBIL or Experian score whenever you check it. You get the band (Excellent / Good / Fair), a trend line, a nudge after 30 days, and tips based on your real card usage.</p>
+        <div class="where">Find it <span>Credit score card → ＋</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-green">📈</span><div><div class="rank">10 · real returns</div><h3>Live fund values in net worth</h3></div></div>
+        <p>Net worth and the freedom meter now use your linked funds' live NAVs instead of an assumed 12%. Unlinked investments still use the estimate.</p>
+        <div class="where">Find it <span>Net worth</span><span>Freedom meter</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-yellow">🗓</span><div><div class="rank">11 · reminders</div><h3>Due dates in your calendar</h3></div></div>
+        <p>One tap adds every EMI, SIP, bill, rent, subscription and card due date to your phone calendar, repeating, with an alert the evening before. If the home-screen app ignores the tap, open the site in Safari and tap again.</p>
+        <div class="where">Find it <span>👤 → Add reminders to calendar</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-purple">✨</span><div><div class="rank">12 · year in review</div><h3>Money Wrapped</h3></div></div>
+        <p>Story slides you tap through: total spent, top category, favourite place, biggest spend, busiest weekday, card of the year, invested, saved %. There's a Share button on the last slide.</p>
+        <div class="where">Find it <span>＋ → 2026 Money Wrapped</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-ink">⤓</span><div><div class="rank">13 · export</div><h3>Excel export &amp; PDF</h3></div></div>
+        <p>Download transactions, recurring items, goals and cards as an Excel file, or print / save the dashboard as a clean PDF without the buttons.</p>
+        <div class="where">Find it <span>👤 → Export to Excel</span><span>👤 → Print / save as PDF</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-pink">▭</span><div><div class="rank">14 · card chips</div><h3>Mini card artwork everywhere</h3></div></div>
+        <div class="mini" aria-label="Card chips">
+          <span class="cc" style="background:linear-gradient(135deg,#3b0a5c,#c2185b)"><b>SBI</b><i>Pulse</i></span>
+          <span class="cc" style="background:linear-gradient(135deg,#1a1205,#b8860b)"><b>SBI</b><i>Octane</i></span>
+          <span class="cc" style="background:linear-gradient(135deg,#140f38,#5f259f)"><b>SBI</b><i>Black</i></span>
+          <span class="cc" style="background:linear-gradient(135deg,#fc8019,#7b1fa2)"><b>HDFC</b><i>Swiggy</i></span>
+          <span class="cc" style="background:linear-gradient(135deg,#0d0d0d,#3d3d3d)"><b>one</b></span>
+          <span class="cc" style="background:linear-gradient(135deg,#0b1f3a,#c46a2b)"><b>BOB</b><i>Eterna</i></span>
+          <span class="cc" style="background:linear-gradient(135deg,#6b1626,#a9a9b3)"><b>Indus</b><i>Diner</i></span>
+          <span class="cc" style="background:linear-gradient(135deg,#2d1b69,#7b5cff)"><b>Jupiter</b><i>Edge+</i></span>
+        </div>
+        <p>Each card is drawn in its own colours with its name (our own artwork, not the banks' logos). The card picker lists your cards first, then known cards to add in one tap.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-blue">🏦</span><div><div class="rank">15 · bank</div><h3>Bank balance card</h3></div></div>
+        <p>Starting balance + income − UPI/cash/bank spends − investments − card bills paid = what's in the bank now. Tap ✏️ to change the starting balance.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-ink">⇅</span><div><div class="rank">16 · layout</div><h3>Customize the dashboard</h3></div></div>
+        <p>Move any card up or down, hide what you don't need, or reset to the default order. Your layout is saved to your account, so your phone and laptop match.</p>
+        <div class="where">Find it <span>＋ / 👤 → Customize layout</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-green">◎</span><div><div class="rank">17 · holdings</div><h3>Existing fund units, no mix-ups</h3></div></div>
+        <p>For units bought before tracking, enter either the <b>total invested</b> or the <b>average price per unit</b>. A check line shows the total, average and today's value. If the numbers look swapped, you get a warning.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-yellow">🏅</span><div><div class="rank">18 · more motivation</div><h3>New badges, challenge &amp; quiz</h3></div></div>
+        <ul>
+          <li>Badges: Cards under 30%, Bill payer, Portfolio in green, ₹1L portfolio (12 in total)</li>
+          <li>+100 XP per card bill paid; new "card dues under 30% of limits" challenge</li>
+          <li>Quiz: UPI or card? Card vs card? Which of your funds is winning?</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-lime">✓</span><div><div class="rank">19 · fixes</div><h3>Smaller fixes</h3></div></div>
+        <ul>
+          <li>Headline says "You spent ₹509" until income is logged</li>
+          <li>Bank statement CSV dates stay day-first (05/11 = 5 Nov)</li>
+          <li>Statement import lists all your cards and banks</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===================== EARLIER ===================== -->
+  <section class="sec" aria-labelledby="earlier">
+    <div class="sec-head"><h2 id="earlier">Everything else</h2><span class="tag dim">23–24 Nov</span><p>The foundation</p></div>
+    <div class="grid">
+      <article class="card wide">
+        <div class="card-top"><span class="tile t-blue">📊</span><h3>Dashboard &amp; comparisons</h3></div>
+        <div class="kpis"><div class="kpi"><small>Spent</small><b>₹1,05,548</b></div><div class="kpi"><small>Income</small><b>₹1,38,764</b></div><div class="kpi"><small>Savings</small><b>24%</b></div></div>
+        <p>Day, Week, Month and Year, each compared with the same point of the previous period. Spending pace, category donut, money-flow sankey, income vs spend, category vs before, the 365-day spending calendar, top merchants and "at this pace" projections. <span style="color:var(--ink3)">(Numbers above are demo data.)</span></p>
+      </article>
+      <article class="card">
+        <div class="card-top"><span class="tile t-purple">🔥</span><h3>Motivation</h3></div>
+        <p>Level &amp; XP, monthly report card (A+ to D), streaks, badges, challenges, goals with rings, freedom (FIRE) meter, milestone celebrations with confetti, and rotating "what it bought you" tips.</p>
+      </article>
+      <article class="card">
+        <div class="card-top"><span class="tile t-pink">🎮</span><h3>Higher or lower?</h3></div>
+        <p>A 5-round quiz built from your own spending: pizza or fuel last month? cabs or food delivery this year?</p>
+      </article>
+      <article class="card">
+        <div class="card-top"><span class="tile t-yellow">🔁</span><h3>Recurring &amp; Mark paid</h3></div>
+        <p>EMIs with tenure, progress and end date; SIPs, subscriptions (monthly or yearly), bills, rent, salary. <b>Coming up</b> lists the next 30 days with Mark paid / received / invested, overdue items in orange.</p>
+      </article>
+      <article class="card">
+        <div class="card-top"><span class="tile t-ink">✎</span><h3>Edit anything</h3></div>
+        <p>Tap any transaction, EMI, SIP, subscription or goal to edit or delete it (two taps to delete). Editing a recurring item asks: <b>from now on</b>, or <b>past + future</b>.</p>
+      </article>
+      <article class="card">
+        <div class="card-top"><span class="tile t-green">📈</span><h3>Mutual fund portfolio</h3></div>
+        <p>Link a SIP to its fund by name. Units are worked out from each day's NAV; you see current value, gain, last-day change and an invested-vs-value trend. Prices refresh daily from AMFI data.</p>
+      </article>
+      <article class="card">
+        <div class="card-top"><span class="tile t-orange">🔒</span><h3>Logins &amp; privacy</h3></div>
+        <p>Email and password login. Every row is private to its owner, enforced by the database. Start fresh with your bank balance, or explore with demo data.</p>
+      </article>
+      <article class="card">
+        <div class="card-top"><span class="tile t-lime">📱</span><h3>iPhone app, free</h3></div>
+        <p>Safari → Share → Add to Home Screen. Dark-friendly icon, full-screen, 16px inputs (no zoom on tap), no jumping cards, safe areas for the notch and home bar.</p>
+      </article>
+      <article class="card">
+        <div class="card-top"><span class="tile t-blue">☾</span><h3>Look &amp; feel</h3></div>
+        <p>Playful light theme with a dark mode, animated counters and charts, chart colours tested for colour blindness in both themes, search and "Show more" in Transactions.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===================== MAP ===================== -->
+  <section class="sec" aria-labelledby="map">
+    <div class="sec-head"><h2 id="map">Where things live</h2></div>
+    <div class="map">
+      <div class="card"><h3><span class="tile t-ink" style="width:32px;height:32px;border-radius:10px;font-size:14px">＋</span>Big ＋ button</h3>
+        <ul><li>Add expense / income</li><li>Import statement</li><li>Pay card bill</li><li>Add EMI / SIP / bill</li><li>Cards &amp; settings</li><li>Set budgets</li><li>Customize layout</li><li>Money Wrapped</li></ul></div>
+      <div class="card"><h3><span class="tile t-purple" style="width:32px;height:32px;border-radius:50%;font-size:14px">P</span>Your initial (top right)</h3>
+        <ul><li>Customize layout</li><li>Cards &amp; settings</li><li>Edit bank balance</li><li>Calendar reminders</li><li>Export to Excel</li><li>Print / save as PDF</li><li>Sign out · delete all data</li></ul></div>
+      <div class="card"><h3><span class="tile t-lime" style="width:32px;height:32px;border-radius:10px;font-size:14px">☝</span>Tap to edit</h3>
+        <ul><li>Any transaction</li><li>EMIs &amp; "Everything else" list</li><li>Subscriptions</li><li>Goal rings</li><li>Card dues → Pay bill</li><li>Friends → Settled</li></ul></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Paisa Tracker · Next.js, Supabase, Vercel · free tiers only</span>
+    <span>Screenshots and numbers here are demo data, never real accounts.</span>
+  </footer>
+</div>
+
+</body>
+</html>

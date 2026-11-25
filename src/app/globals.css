@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Light "playful" theme is the default; dark is opt-in via the toggle. */
+:root {
+  color-scheme: light;
+  --page: #f3f2ee;
+  --card: #ffffff;
+  --soft: #f1f0ec;
+  --line: #e8e6e0;
+  --ink: #0b0b0b;
+  --ink2: #52514e;
+  --ink3: #8a887f;
+  --spot: rgba(139, 92, 246, 0.07);
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 18px 40px -24px rgba(20, 20, 20, 0.22);
+  --shadow-hover: 0 1px 0 rgba(0, 0, 0, 0.02), 0 26px 50px -22px rgba(20, 20, 20, 0.3);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0b0b0c;
+  --card: #161616;
+  --soft: #222222;
+  --line: #262626;
+  --ink: #f0efec;
+  --ink2: #c3c2b7;
+  --ink3: #8a887f;
+  --spot: rgba(139, 92, 246, 0.12);
+  --shadow: 0 0 0 rgba(0, 0, 0, 0);
+  --shadow-hover: 0 20px 50px -20px rgba(0, 0, 0, 0.6);
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-page: var(--page);
+  --color-card: var(--card);
+  --color-soft: var(--soft);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink2: var(--ink2);
+  --color-ink3: var(--ink3);
+  --shadow-card: var(--shadow);
+  --shadow-card-hover: var(--shadow-hover);
+}
+
+@theme {
+  --color-pop-orange: #ff6b2c;
+  --color-pop-purple: #8b5cf6;
+  --color-pop-lime: #b9f26a;
+  --color-pop-pink: #ff4f8b;
+  --color-pop-yellow: #ffc83d;
+  --color-pop-blue: #3b82f6;
+  --color-pop-green: #10b981;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+::selection {
+  background: #b9f26a;
+  color: #0b0b0b;
+}
+
+/* App-like touch feel on phones */
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation; /* no double-tap zoom delay */
+  overscroll-behavior-y: none;
+}
+button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Cards lift on hover only where there is a real mouse; on touch they'd get stuck raised. */
+.card-lift {
+  transition: transform 0.25s ease, box-shadow 0.3s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .card-lift:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-hover);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Print / save as PDF: a clean report without buttons, menus or animations. */
+@media print {
+  :root { --page: #fff; }
+  body { background: #fff !important; }
+  .no-print, button[aria-label="Add"], button[aria-label="Account"], [aria-label="Toggle theme"] { display: none !important; }
+  section { break-inside: avoid; box-shadow: none !important; opacity: 1 !important; transform: none !important; }
+}
