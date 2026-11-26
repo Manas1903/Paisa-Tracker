@@ -136,7 +136,7 @@ export function parsePdf(lines: PdfLine[], card: boolean): ParseResult {
     const amount = parseAmount(amountText);
     if (!amount) continue;
     const previousBalance: number | undefined = last ? last.balance : opening;
-    if (card) credit = isCreditMark(amountText) || /payment received|thank you|refund|reversal|cashback|emi conversion/i.test(desc);
+    if (card) credit = isCreditMark(amountText) || /payment\s*(?:received|recd)|pmt\s*(?:received|recvd|recd)|thank you|refund|reversal|cashback|emi conversion/i.test(desc);
     else if (xDebit !== null && xCredit !== null) credit = Math.abs(amountItem.x - xCredit) < Math.abs(amountItem.x - xDebit);
     else if (balance !== undefined && previousBalance !== undefined) credit = balance > previousBalance;
     else if (isCreditMark(amountText) || /(?:^|\s)(?:cr|credit)$/i.test(suffix ?? "")) credit = true;
@@ -179,8 +179,9 @@ const RULES: [RegExp, string][] = [
 ];
 
 /** Credit card bill payments (bank side) and "payment received" (card side): saved as transfers, not spending. */
-const BANK_CARD_PAY = /\b(?:credit\s*card\s*(?:payment|bill|dues|autopay)|cc\s*(?:payment|bill|dues)|cc\b.{0,50}\bautopay|card\s*(?:payment|bill|dues)|cred(?:\.club)?)\b/i;
-const CARD_PAYMENT_RECEIVED = /\b(?:payment received|thank\s*you|card payment|bill payment)\b/i;
+const BANK_CARD_PAY = /\b(?:credit\s*card|cc)\b.{0,50}\b(?:payment|bill|dues|autopay|repayment|repay)\b|\bcard\s*(?:payment|bill|dues|autopay|repayment|repay)\b/i;
+const CARD_BRAND_PAYMENT = /\b(?:autopay|payment|repayment|repay|bill|dues|bbps|ach|nach)\b/i;
+const CARD_PAYMENT_RECEIVED = /\b(?:payment\s*(?:received|recd|rec[ei]ved)|pmt\s*(?:received|recvd|recd)|thank\s*you|card payment|bill payment|autopay)\b/i;
 const REFUND_CREDIT = /\b(?:refund|reversal|cashback|emi conversion|conversion to emi)\b/i;
 /** Moving money between your own accounts: neither spending nor a card payment, unticked by default. */
 const SELF = /\bself\b|own a\/?c|sweep|fd booked/i;
@@ -218,11 +219,15 @@ export function toDrafts(lines: Parsed[], card: boolean, existing: Txn[], learne
     const merchant = cleanMerchant(p.desc);
     const knownCardHint = !!guessCard(p.desc, opts.cards ?? []);
     const ibBillpay = /\bib\s+billpay\b/i.test(p.desc) && knownCardHint;
-    const cardPay = card ? p.credit && CARD_PAYMENT_RECEIVED.test(p.desc) : !p.credit && (BANK_CARD_PAY.test(p.desc) || ibBillpay);
+    const credNarration = /\bcred(?:\.club)?\b/i.test(p.desc);
+    const credExplicitCard = /\b(?:credit\s*card|cc)\b|\bcard\s*(?:payment|bill|dues)\b/i.test(p.desc);
+    const explicitBankCardPay = BANK_CARD_PAY.test(p.desc) || (knownCardHint && CARD_BRAND_PAYMENT.test(p.desc) && (!credNarration || credExplicitCard));
+    const cardPay = card ? p.credit && CARD_PAYMENT_RECEIVED.test(p.desc) : !p.credit && (explicitBankCardPay || ibBillpay);
+    const unknownCardCredit = card && p.credit && !cardPay && !REFUND_CREDIT.test(p.desc);
     const self = !cardPay && SELF.test(p.desc);
     const refund = p.credit && REFUND_CREDIT.test(p.desc) && !cardPay;
     const unsure = !!p.uncertain;
-    const type: TxnType = cardPay ? "transfer" : refund ? "expense" : p.credit ? "income" : INVEST.test(p.desc) ? "invest" : "expense";
+    const type: TxnType = cardPay || unknownCardCredit ? "transfer" : refund ? "expense" : p.credit ? "income" : INVEST.test(p.desc) ? "invest" : "expense";
     const account = card ? opts.account ?? "" : cardPay ? guessCard(p.desc, opts.cards ?? []) : undefined;
     const category = type === "transfer" ? "Card bill"
       : learned[merchant.toLowerCase()]
@@ -230,14 +235,14 @@ export function toDrafts(lines: Parsed[], card: boolean, existing: Txn[], learne
           : type === "invest" ? "Mutual funds" : RULES.find(([re]) => re.test(p.desc))?.[1] ?? "Other");
     // A bill payment shows up on both the bank and the card statement: whichever is imported first wins.
     const dup = near(p, merchant, type === "transfer" ? TRANSFER_DUPLICATE_DAYS : DUPLICATE_WINDOW_DAYS, type, refund);
-    const note = unsure ? "Check debit or credit" : dup ? "Already logged" : type === "transfer" ? "Card bill payment" : self ? "Own-account transfer" : refund ? "Refund · reduces spending" : "";
+    const note = unsure ? "Check debit or credit" : unknownCardCredit ? "Review card-statement credit" : dup ? "Already logged" : type === "transfer" ? "Card bill payment" : self ? "Own-account transfer" : refund ? "Refund · reduces spending" : "";
     return {
       id: "", key: `${i}-${p.date.getTime()}-${p.amount}`, date: p.date, amount: Math.round(p.amount * 100) / 100, type, category,
       merchant: type === "transfer" ? `${account || "Card"} bill` : merchant,
       mode: card ? "Card" : type === "transfer" ? "NetBanking" : /upi/i.test(p.desc) ? "UPI" : /pos|ecom/i.test(p.desc) ? "DebitCard" : "NetBanking",
       account: account || undefined,
       isRefund: refund || undefined,
-      include: !unsure && !dup && !self, note,
+      include: !unsure && !dup && !self && !unknownCardCredit, note,
     };
   });
 }

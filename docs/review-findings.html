@@ -48,10 +48,10 @@
     <h1>What changed.<br><span>What I’d do differently.</span></h1>
     <p class="lede">I checked the Claude review against the current source and applied the fixes that improve accounting or avoid clear import errors. This note separates completed code changes from decisions that need more product or data-provider clarity.</p>
     <div class="meta">
-      <span class="pill">Local only · not pushed</span>
-      <span class="pill">Fake-data preview: HTTP 200</span>
-      <span class="pill">Self-test cases added · suite not run</span>
-      <span class="pill">Supabase migration pending</span>
+      <span class="pill">Prior release · GitHub main + Vercel live</span>
+      <span class="pill">Follow-up fixes · local check passed</span>
+      <span class="pill">Regression tests · all passed</span>
+      <span class="pill">Supabase migration · applied before deploy</span>
     </div>
   </header>
 
@@ -68,8 +68,9 @@
         <span class="tag done">Statements</span>
         <h3>Safer classification and refunds</h3>
         <ul>
-          <li>Ordinary utility <code>BILLPAY</code> rows stay expenses; recognized card payment wording and known-card IB BILLPAY rows become transfers.</li>
+          <li>Ordinary utility <code>BILLPAY</code> and CRED rent rows stay expenses. Issuer-specific card autopay, ACH, BBPS, repayment, and known-card IB BILLPAY rows become transfers.</li>
           <li>Bank POS rows use debit-card mode, so they do not create credit-card dues.</li>
+          <li>Card-statement payment credits are transfers, never income. Unclear card credits start unchecked for review.</li>
           <li>Refund credits are saved as expenses with refund semantics, reducing spending, budgets, and the relevant card balance.</li>
           <li>Rows with unknown debit/credit direction need review and cannot pass statement reconciliation as balanced.</li>
           <li>Duplicate matching checks merchant and type. Stable import IDs plus upsert make a retry after a partial batch safe.</li>
@@ -81,8 +82,9 @@
         <ul>
           <li>Outstanding balances are calculated per card, so one card’s overpayment cannot hide another card’s due.</li>
           <li>Refunds reduce the corresponding card exposure.</li>
-          <li>Split purchases use the full charged amount for reward limits and card exposure; spending still uses the user’s share.</li>
-          <li>Reward exclusions match complete words, and cap tracking keys each billing cycle by its actual start date.</li>
+          <li>Split purchases use the full charged amount for card exposure and reward limits. Friend shares stay owed to you, and settled shares reach bank income for card and bank purchases.</li>
+          <li>Named card payments reduce that card’s due. Unnamed payments reduce aggregate dues and are shown as unallocated; per-card bill actions pause until you assign the payment.</li>
+          <li>Reward bonus keywords can match concatenated merchant names such as <code>SWIGGYINSTAMART</code>; exclusions still require whole words, so <code>emi</code> does not match <code>Chemist</code>.</li>
         </ul>
       </article>
       <article>
@@ -90,6 +92,7 @@
         <h3>Less misleading balances and reminders</h3>
         <ul>
           <li>When principal, annual rate, and term are known, the net-worth loan value uses estimated remaining principal rather than all future EMI payments.</li>
+          <li>Loans with no logged EMI rows count installments elapsed by date instead of assuming no payments have happened.</li>
           <li>FD/RD estimates accrue by elapsed days; maturity dates clamp to valid month-end dates.</li>
           <li>Card due dates and monthly calendar reminders handle short months.</li>
         </ul>
@@ -102,13 +105,19 @@
           <li>Future-dated stock purchases are excluded from current holdings. Same-day purchases do not show a meaningless annualized XIRR.</li>
           <li>XIRR is labelled annualized.</li>
           <li>Quick Add is scrollable on small screens, save errors release the busy state, dashboard transaction rows are buttons, and motion follows the system reduced-motion preference.</li>
-          <li>Common edit sheets and Quick Add have dialog semantics and keyboard focus containment.</li>
+          <li>Quick Add now has one dialog role and moves keyboard focus into the form when it opens. Common edit sheets keep focus containment.</li>
         </ul>
       </article>
       <article class="wide">
         <span class="tag done">Docs and database</span>
-        <h3>Updated project guidance and prepared a migration</h3>
-        <p>README, feature guide, and AGENTS now describe the corrected card-spend timing, refund behavior, import safety, annualized XIRR, and stock-data limits. A new Supabase migration adds refund storage, same-owner recurring links, and input-size constraints. The migration is not applied to the hosted database.</p>
+        <h3>Updated project guidance and applied the migration</h3>
+        <p>README, feature guide, and AGENTS describe card-spend timing, refunds, import safety, annualized XIRR, and stock-data limits. The Supabase migration for refund storage, same-owner recurring links, and input-size constraints was applied successfully before the production app deploy. Adding its validated constraints completed successfully against existing hosted rows.</p>
+      </article>
+      <article class="wide">
+        <span class="tag done">Follow-up review fixes</span>
+        <h3>Corrected six accounting and matching regressions</h3>
+        <p>Card split receivables are retained; bank-side card bill patterns are recognized without treating CRED rent as a bill; card statement credits cannot default to income; unnamed payments reduce aggregate card dues with a visible unallocated balance; old accountless POS rows no longer create phantom card dues; loans count elapsed installments when payment rows are absent; and reward bonus terms match compact merchant tokens.</p>
+        <p>The “Where it went” subtitle now says it includes expenses and investments. It labels only the positive category outflows represented by the pie and explains refund credits and categories at or below zero. The calendar rule has logic coverage, but an actual iOS/Google Calendar import was not tested.</p>
       </article>
     </div>
   </section>
@@ -120,6 +129,11 @@
         <span class="tag defer">Needs a workflow decision</span>
         <h3>FD/RD maturity and payout</h3>
         <p>I would not automatically remove a matured deposit or turn its full principal into income. It may have renewed, paid out, or remained in the account. The app still needs an explicit “record payout / renew” action that closes the investment and records the destination without counting principal as income. Until then, maturity values remain estimates and can be double-counted if the user logs proceeds but keeps the deposit asset.</p>
+      </article>
+      <article>
+        <span class="tag defer">Accounting choice needed</span>
+        <h3>EMI conversion and cashback</h3>
+        <p>An EMI conversion currently offsets the original card purchase as a refund; cashback also reduces spending. EMI conversion can be reasonable when the purchase is replaced by tracked installments, but those installments are not created automatically. Cashback can be shown as a rebate or separate income. Keep these semantics explicit before changing them.</p>
       </article>
       <article>
         <span class="tag risk">Provider terms</span>
@@ -149,7 +163,7 @@
       <article class="wide">
         <span class="tag defer">Not changed in this pass</span>
         <h3>Hosted security settings and CSP</h3>
-        <p>The review did not inspect the live Supabase authentication configuration. I did not change hosted auth settings. I also did not add a restrictive Content Security Policy without first inventorying the app’s required script, font, image, and API origins; an incomplete policy can break sign-in or data loading. The separate input-size and ownership checks are prepared in the migration, pending local/hosted database review.</p>
+        <p>The review did not inspect the live Supabase authentication configuration. I did not change hosted auth settings. I also did not add a restrictive Content Security Policy without first inventorying required script, font, image, and API origins; an incomplete policy can break sign-in or data loading. FD payout/renewal and stock sales/cost basis also remain deferred until their accounting rules are defined.</p>
       </article>
     </div>
   </section>
@@ -157,8 +171,8 @@
   <section aria-labelledby="status">
     <h2 id="status">Current status</h2>
     <div class="callout">
-      <p><strong>Local changes are ready for your review.</strong> The fake-data preview is at <code>http://127.0.0.1:3000/preview</code>. The dev page returned HTTP 200. I added self-test cases but did not run the test suite.</p>
-      <p>The Supabase migration is still pending. Do not deploy the code to the signed-in app until that migration has been reviewed and applied. Nothing has been pushed to GitHub or deployed to Vercel.</p>
+      <p><strong>The earlier release is on GitHub main and live on Vercel.</strong> Its Supabase migration was applied successfully first. For this follow-up, <code>npm run check</code> passed: type checks and self-tests passed, with one existing non-blocking lint warning in <code>postcss.config.mjs</code>.</p>
+      <p>The follow-up fixes are currently local and are not yet on GitHub or Vercel. No new database migration is needed for them. The preview route uses fake data; never use real financial statements for test imports.</p>
     </div>
   </section>
 

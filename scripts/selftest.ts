@@ -92,6 +92,20 @@ const ambiguousBill = toDrafts([{ date: statementDay, desc: "ELECTRICITY BILLPAY
 ok("utility billpay stays an expense", ambiguousBill.type === "expense");
 const explicitBill = toDrafts([{ date: statementDay, desc: "IB BILLPAY SBI CARD", amount: 2200, credit: false }], false, [], {}, { cards: ["SBI Pulse"] })[0];
 ok("known-card IB BILLPAY is a transfer", explicitBill.type === "transfer");
+for (const desc of ["SBI CARD AUTOPAY", "ACH D- SBICARD", "BBPS SBI CARD 1234", "ONECARD REPAYMENT"]) {
+  const draft = toDrafts([{ date: statementDay, desc, amount: 2200, credit: false }], false, [], {}, { cards: ["SBI Pulse", "OneCard"] })[0];
+  ok(`card bill debit stays a transfer: ${desc}`, draft.type === "transfer" && draft.include);
+}
+const credRent = toDrafts([{ date: statementDay, desc: "CRED UPI RENT PAYMENT", amount: 2200, credit: false }], false, [], {}, { cards: ["SBI Pulse"] })[0];
+ok("CRED rent is not mistaken for a card bill", credRent.type === "expense");
+const credBankRent = toDrafts([{ date: statementDay, desc: "UPI/CRED RENT PAYMENT HDFC BANK", amount: 2200, credit: false }], false, [], {}, { cards: ["HDFC Swiggy"] })[0];
+ok("CRED rent stays an expense even with the bank name in its narration", credBankRent.type === "expense");
+const receivedBill = toDrafts([{ date: statementDay, desc: "AUTOPAY PAYMENT RECD", amount: 2200, credit: true }], true, [], {}, { account: "SBI Pulse" })[0];
+const bbpsReceived = toDrafts([{ date: statementDay, desc: "BBPS PMT RECVD", amount: 2200, credit: true }], true, [], {}, { account: "SBI Pulse" })[0];
+ok("card statement autopay credit is a transfer, not income", receivedBill.type === "transfer" && receivedBill.include);
+ok("card statement BBPS credit is a transfer, not income", bbpsReceived.type === "transfer" && bbpsReceived.include);
+const unknownCardCredit = toDrafts([{ date: statementDay, desc: "ACCOUNT ADJUSTMENT CR", amount: 300, credit: true }], true, [], {}, { account: "SBI Pulse" })[0];
+ok("unknown card credit requires review and is never income", unknownCardCredit.type !== "income" && !unknownCardCredit.include && unknownCardCredit.note === "Review card-statement credit");
 const refundDraft = toDrafts([{ date: statementDay, desc: "AMAZON REFUND", amount: 500, credit: true }], false, [], {})[0];
 ok("statement refund reduces expense", refundDraft.type === "expense" && refundDraft.isRefund === true && expenseAmount(refundDraft) === -500);
 const debitPos = toDrafts([{ date: statementDay, desc: "POS 1234 ZOMATO", amount: 500, credit: false }], false, [], {})[0];
@@ -113,6 +127,13 @@ const cardFlow = bankFlow([
   { ...T(new Date(2026, 10, 10), 30000, "transfer", "SBI Pulse bill", "Card bill", "NetBanking"), account: "SBI Pulse" },
 ], new Date(2026, 10, 1));
 ok("before the bill: bank lost only UPI spend, card owes 30k", cardFlow.bankSpend === 500 && cardFlow.billsPaid === 0 && cardFlow.cardDues === 30000, cardFlow);
+const unnamedCardPayment = bankFlow([
+  { ...T(new Date(2026, 10, 2), 30000, "expense", "Amazon", "Shopping", "Card"), account: "SBI Pulse" },
+  T(new Date(2026, 10, 20), 30000, "transfer", "Card bill", "Card bill", "NetBanking"),
+]);
+ok("unassigned card-bill transfer reduces aggregate dues", unnamedCardPayment.cardDues === 0 && unnamedCardPayment.unassignedCardPayments === 30000, unnamedCardPayment);
+const legacyPos = bankFlow([T(new Date(2026, 10, 2), 500, "expense", "Zomato", "Food", "Card")]);
+ok("legacy accountless bank POS does not create card dues", legacyPos.cardDues === 0 && legacyPos.bankSpend === 500, legacyPos);
 ok("card purchases count in swipe month; later payment is not a second expense",
   total([
     { ...T(new Date(2026, 9, 5), 30000, "expense", "Amazon", "Shopping", "Card"), account: "SBI Pulse" },
@@ -125,6 +146,12 @@ ok("card purchases count in swipe month; later payment is not a second expense",
 const nwDemo = netWorth(demoBook(now), now).at(-1)!;
 ok("net worth = cash + investments − loans − card dues + owed to you", Math.abs(nwDemo.value - (nwDemo.cash + nwDemo.invest - nwDemo.loans - nwDemo.dues + nwDemo.owed)) < 1 && nwDemo.owed === 2400);
 ok("salary credit → income/Salary", drafts.some((d) => d.type === "income" && d.category === "Salary"));
+const cardLunch = { ...T(new Date(2026, 10, 2), 1000, "expense", "Cafe", "Food", "Card"), account: "SBI Pulse", split: [{ name: "Aman", amount: 1000, settled: false }] };
+const cardSplitOwed = bankFlow([cardLunch]);
+ok("card split increases card due and records friend share owed", cardSplitOwed.cardDues === 2000 && cardSplitOwed.owedToYou === 1000, cardSplitOwed);
+const settledCardLunch = { ...cardLunch, split: [{ name: "Aman", amount: 1000, settled: true }] };
+const cardSplitSettled = bankFlow([settledCardLunch]);
+ok("settled card split reimbursement is bank income", cardSplitSettled.income === 1000 && cardSplitSettled.owedToYou === 0, cardSplitSettled);
 const heldFd = { ...T(new Date(2026, 10, 24), 10000, "invest", "Test FD", "FD"), annualRate: 12, tenureMonths: 12, compoundingFrequency: "quarterly" as const };
 const held = fixedIncomeHoldings([], [heldFd], new Date(2026, 10, 25))[0];
 ok("FD estimate accrues smoothly by elapsed days", !!held && held.value > 10000 && held.value < 10010);
@@ -132,6 +159,9 @@ const futureLoan: Recurring = { id: "future-loan", name: "Loan", kind: "EMI", ty
 const loanTxn = { ...T(new Date(2026, 0, 2), 10000, "expense", "Loan", "EMI"), recurringId: "future-loan" };
 const loanNow = netWorth({ ...empty, txns: [loanTxn], recurring: [futureLoan] }, new Date(2026, 0, 3), 1)[0];
 ok("known-rate loan liability is below original principal after payment", loanNow.loans < 100000 && loanNow.loans > 0, loanNow.loans);
+const legacyLoan: Recurring = { id: "legacy-loan", name: "Legacy loan", kind: "EMI", type: "expense", category: "EMI", amount: 10378, day: 1, start: new Date(2024, 10, 1), tenure: 60, annualRate: 9, loanPrincipal: 500000 };
+const legacyLoanNow = netWorth({ ...empty, recurring: [legacyLoan] }, new Date(2026, 10, 24), 1)[0];
+ok("loan with no logged EMI payments counts installments elapsed by date", legacyLoanNow.loans < 400000 && legacyLoanNow.loans > 300000, legacyLoanNow.loans);
 const stockLot = { ...T(new Date(2026, 0, 1), 1000, "invest", "Test stock", "Stocks"), stockSymbol: "NSE:TEST", stockQuantity: 1, stockUnitPrice: 1000 };
 ok("future stock purchases are excluded from current holdings", stockPositions([{ ...stockLot, date: new Date(2026, 1, 1) }], { "NSE:TEST": { price: 1100, updatedAt: "2026-02-01" } }, new Date(2026, 0, 15)).length === 0);
 ok("same-day stock purchase has no misleading annualized XIRR", stockPositions([stockLot], { "NSE:TEST": { price: 1100, updatedAt: "2026-01-01" } }, new Date(2026, 0, 1))[0].xirr === undefined);
@@ -156,6 +186,8 @@ const excludedSpend = { ...T(new Date(2026, 10, 5), 1000, "expense", "BPCL", "Fu
 ok("excluded spend earns zero even when a bonus keyword matches", rewardRate(excludedCard, "BPCL", "Fuel") === 0
   && rewardsEarned(excludedCard, [excludedSpend], new Date(2026, 10, 1), new Date(2026, 11, 1)) === 0);
 ok("whole-word reward exclusion does not treat Chemist as EMI", rewardRate({ name: "X", rewards: { base: 1, exclude: "emi" } }, "Chemist Warehouse", "Health") === 1);
+ok("reward bonus matches concatenated bank merchant token", rewardRate({ name: "X", rewards: { base: 1, bonus: [{ match: "swiggy", rate: 5 }] } }, "SWIGGYINSTAMART", "Shopping") === 5);
+ok("reward bonus matches concatenated fuel merchant token", rewardRate({ name: "X", rewards: { base: 1, bonus: [{ match: "bpcl", rate: 5 }] } }, "BPCLFUEL STN", "Transport") === 5);
 const cappedCard = { name: "Cap test", statementDay: 10, rewards: { base: 1, bonus: [{ match: "swiggy", rate: 10, capPerMonth: 1500 }] } };
 const cappedSpends = [
   { ...T(new Date(2026, 10, 12), 20000, "expense", "Swiggy", "Food", "Card"), account: "Cap test" },

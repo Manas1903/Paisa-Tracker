@@ -170,8 +170,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
   const cats = useMemo(() => [...CATEGORIES.map((c) => c.name), "Other"], []);
   const byCat = useMemo(() => groupBy(txns, "expense", r.curStart, r.now, (t) => displayCategory(t.category)), [txns, r]);
   const byCatPrev = useMemo(() => groupBy(txns, "expense", r.prevStart, r.prevSameTime, (t) => displayCategory(t.category)), [txns, r]);
-  // This chart is a cash-outflow view: card purchases move here when their bill is paid,
-  // so the same rupee is never shown once at swipe and again at repayment.
+  // This chart groups expense and investment transactions by date; bill repayments are transfers.
   const outflows = useMemo(() => {
     const sums = new Map<string, number>();
     for (const t of txns) {
@@ -188,6 +187,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
   }, [txns, r, dark, cats]);
   const slices: Slice[] = outflows;
   const spentTotal = slices.reduce((s, x) => s + x.value, 0);
+  const refundTotal = txns.reduce((sum, t) => sum + (inRange(t, r.curStart, r.now) && t.type === "expense" && t.isRefund ? t.amount : 0), 0);
 
   const trend = useMemo(
     () => trendOption(T, bucketLabels(period), cumulative(txns, period, r.curStart, r.now, r.now), cumulative(txns, period, r.prevStart, r.prevEnd), cap(word)),
@@ -430,11 +430,11 @@ export default function Dashboard({ book, setBook, email, onReset }: {
             </Card>
     ) },
     { key: "where", title: "Where it went", node: (
-            <Card i={1} title="Where it went" subtitle={`Spending by purchase date this ${period} · card swipes count here; bill payments only affect bank balance`} icon={<PieChart size={16} />} pop="pink">
+            <Card i={1} title="Where it went" subtitle={`Expenses and investments by transaction date this ${period} · card bill payments only affect bank balance`} icon={<PieChart size={16} />} pop="pink">
               <div className="relative">
                 <Chart option={donutOption(T, slices)} height={190} />
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-xs text-ink3">Total</span>
+                  <span className="text-xs text-ink3">Outflows shown</span>
                   <span className="text-xl font-black tracking-tight"><Ticker value={spentTotal} format={fmtShort} /></span>
                 </div>
               </div>
@@ -448,6 +448,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
                   </li>
                 ))}
               </ul>
+              {refundTotal > 0 && <p className="mt-2 text-xs text-ink3">Refund credits {fmtShort(refundTotal)} reduce their categories. Categories at zero or below are omitted from the pie.</p>}
             </Card>
     ) },
     { key: "networth", title: "Net worth", node: (

@@ -31,7 +31,9 @@ export type Txn = {
 export type SplitShare = { name: string; amount: number; settled: boolean };
 
 /** Spend on a credit card: counts as spending now, leaves the bank only when the bill is paid. */
-export const isCardSpend = (t: Txn) => t.type === "expense" && (t.mode === "Card" || !!t.account);
+// Card statements and Quick Add attach an account. Legacy bank POS rows may say "Card"
+// without an account; treating those as credit-card liabilities creates phantom dues.
+export const isCardSpend = (t: Txn) => t.type === "expense" && !!t.account;
 /** Full amount charged to the card, including friends' shares in a split purchase. */
 export const chargedAmount = (t: Txn) => t.amount + (t.split ?? []).reduce((sum, share) => sum + share.amount, 0);
 /** Refund rows keep positive stored amounts; they reduce expense and card exposure. */

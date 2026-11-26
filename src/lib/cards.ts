@@ -46,6 +46,13 @@ export const rewardsFor = (c: CreditCard) => c.rewards ?? CARD_REGISTRY[cardStyl
 export const keywordsMatch = (keywords: string, text: string) => {
   const normalized = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
   return keywords.split("|").map((k) => k.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim())
+    .some((k) => !!k && (normalized.includes(` ${k} `) || normalized.replace(/\s/g, "").includes(k.replace(/\s/g, ""))));
+};
+
+/** Bonus terms may be embedded in bank merchant strings; exclusions stay whole-word only. */
+const exclusionMatches = (keywords: string, text: string) => {
+  const normalized = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+  return keywords.split("|").map((k) => k.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim())
     .some((k) => !!k && normalized.includes(` ${k} `));
 };
 
@@ -54,7 +61,7 @@ export function rewardRate(c: CreditCard, merchant: string, category: string) {
   const r = rewardsFor(c);
   if (!r) return null;
   const text = `${merchant} ${category}`;
-  if (r.exclude && keywordsMatch(r.exclude, text)) return 0;
+  if (r.exclude && exclusionMatches(r.exclude, text)) return 0;
   const bonus = (r.bonus ?? []).filter((b) => keywordsMatch(b.match, text)).map((b) => b.rate);
   return Math.max(r.base, ...bonus);
 }
@@ -63,7 +70,7 @@ function rewardRule(c: CreditCard, merchant: string, category: string) {
   const rewards = rewardsFor(c);
   if (!rewards) return null;
   const text = `${merchant} ${category}`;
-  if (rewards.exclude && keywordsMatch(rewards.exclude, text)) return { rate: 0, key: "excluded", cap: undefined, fallbackToBase: false };
+  if (rewards.exclude && exclusionMatches(rewards.exclude, text)) return { rate: 0, key: "excluded", cap: undefined, fallbackToBase: false };
   const bonus = (rewards.bonus ?? [])
     .map((rule, i) => ({ rule, i }))
     .filter(({ rule }) => keywordsMatch(rule.match, text))

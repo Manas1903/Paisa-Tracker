@@ -59,6 +59,7 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
+    requestAnimationFrame(() => dialogRef.current?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), button:not([disabled])')?.focus());
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); previous?.focus(); };
@@ -130,7 +131,7 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
   return (
     <AnimatePresence>
       {open && (
-        <motion.div role="dialog" aria-modal="true" aria-label={editing ? "Edit transaction" : "Add transaction"} className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center"
+        <motion.div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, pointerEvents: "none" }} onClick={onClose}>
           <motion.form ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="quick-add-title" tabIndex={-1} onKeyDown={(e) => {
             if (e.key !== "Tab" || !dialogRef.current) return;

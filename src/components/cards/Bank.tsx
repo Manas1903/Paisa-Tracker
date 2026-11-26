@@ -45,6 +45,7 @@ export function BankCard({ i, openingBalance, txns, onEdit }: { i: number; openi
 export function CardDuesCard({ i, cards, txns, now, onManage, onPay }: {
   i: number; cards: CreditCard[]; txns: Txn[]; now: Date; onManage: () => void; onPay: (card: string, due: number) => void;
 }) {
+  const flow = bankFlow(txns);
   const names = [...new Set([...cards.map((c) => c.name), ...txns.filter((t) => t.account).map((t) => t.account!)])];
   const unassigned = txns.filter((t) => t.type === "expense" && t.mode === "Card" && !t.account).reduce((a, t) => a + expenseAmount(t), 0);
   const rows = names.map((name) => {
@@ -61,7 +62,7 @@ export function CardDuesCard({ i, cards, txns, now, onManage, onPay }: {
     const rewards = c && rewardsFor(c) ? rewardsEarned(c, txns, m0, new Date(now.getTime() + 1)) : null;
     return { name, due, limit: c?.limit, dueIn, cycle, cycleSpend, statementIn: cycle ? daysBetween(now, cycle.end) : null, rewards };
   });
-  const total = rows.reduce((a, r) => a + r.due, 0);
+  const total = flow.cardDues;
   return (
     <Card i={i} title="Card dues" subtitle="Swiped − paid. Counted as spending when swiped." icon={<CardIcon size={16} />} pop="pink"
       action={<button onClick={onManage} className="rounded-full bg-soft px-3 py-1.5 text-xs font-semibold">Manage cards</button>}>
@@ -86,11 +87,12 @@ export function CardDuesCard({ i, cards, txns, now, onManage, onPay }: {
                     {r.rewards !== null && <span>Rewards this month (est.) <b className="text-pop-green">{fmt(r.rewards)}</b></span>}
                   </div>
                 )}
-                {r.due > 0 && <button onClick={() => onPay(r.name, r.due)} className="mt-1.5 rounded-full bg-ink px-3 py-1 text-[11px] font-bold text-card">Pay bill</button>}
+                {r.due > 0 && flow.unassignedCardPayments === 0 && <button onClick={() => onPay(r.name, r.due)} className="mt-1.5 rounded-full bg-ink px-3 py-1 text-[11px] font-bold text-card">Pay bill</button>}
               </li>
             ))}
           </ul>
           {unassigned > 0 && <p className="mt-3 text-xs text-ink3">{fmt(unassigned)} of card spends aren&apos;t assigned to a card: tap them in Transactions to pick one.</p>}
+          {flow.unassignedCardPayments > 0 && <p className="mt-3 text-xs text-ink3">{fmt(flow.unassignedCardPayments)} in card-bill payments has no card assigned. It reduces total dues, but per-card figures do not allocate it. Assign the payment to a card in Transactions to restore exact per-card balances and bill actions.</p>}
         </>
       )}
     </Card>

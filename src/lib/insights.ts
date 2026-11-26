@@ -6,12 +6,13 @@ const CATEGORY_NAMES: string[] = CATEGORIES.map((c) => c.name);
 export function bankFlow(txns: Txn[], before?: Date) {
   let income = 0, bankSpend = 0, cardSpend = 0, invested = 0, billsPaid = 0, lent = 0, settled = 0, owed = 0;
   const cardBalance = new Map<string, number>();
+  let unassignedCardPayments = 0;
   for (const t of txns) {
     if (before && t.date >= before) continue;
     // Split bills: you paid everyone's share (from the bank or on the card); theirs is owed to you until settled,
     // and comes back into the bank when they pay. The row's `amount` is only your share.
     const shares = (t.split ?? []).reduce((a, sh) => a + sh.amount, 0);
-    if (shares && !isCardSpend(t)) {
+    if (shares) {
       lent += shares;
       for (const sh of t.split!) { if (sh.settled) settled += sh.amount; else owed += sh.amount; }
     }
@@ -20,16 +21,17 @@ export function bankFlow(txns: Txn[], before?: Date) {
     else if (t.type === "transfer") {
       billsPaid += t.amount;
       if (t.account) cardBalance.set(t.account, (cardBalance.get(t.account) ?? 0) - t.amount);
+      else unassignedCardPayments += t.amount;
     } else if (isCardSpend(t)) {
       const signed = expenseAmount(t) + (t.isRefund ? 0 : (t.split ?? []).reduce((n, share) => n + share.amount, 0));
       cardSpend += signed;
-      const key = t.account ?? "__unassigned__";
-      cardBalance.set(key, (cardBalance.get(key) ?? 0) + signed);
+      cardBalance.set(t.account!, (cardBalance.get(t.account!) ?? 0) + signed);
     } else bankSpend += expenseAmount(t);
   }
   return {
     income: income + settled, bankSpend: bankSpend + lent, cardSpend, invested, billsPaid, owedToYou: owed,
-    cardDues: [...cardBalance.values()].reduce((sum, balance) => sum + Math.max(0, balance), 0),
+    cardDues: Math.max(0, [...cardBalance.values()].reduce((sum, balance) => sum + Math.max(0, balance), 0) - unassignedCardPayments),
+    unassignedCardPayments,
   };
 }
 
@@ -77,7 +79,7 @@ function loanPrincipalAt(r: Recurring, paidCount: number) {
 function loansAt(rec: Recurring[], txns: Txn[], at: Date) {
   return rec.filter((r) => r.kind === "EMI" && r.tenure && r.start <= at).reduce((sum, r) => {
     const recorded = txns.filter((t) => t.type === "expense" && !t.isRefund && t.date < at && paysFor(t, r)).length;
-    const paid = recorded || (r.loanPrincipal ? 0 : emisPaid(r, at));
+    const paid = recorded || emisPaid(r, at);
     return sum + loanPrincipalAt(r, paid);
   }, 0);
 }
