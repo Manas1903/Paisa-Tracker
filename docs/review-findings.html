@@ -48,8 +48,8 @@
     <h1>What changed.<br><span>What I’d do differently.</span></h1>
     <p class="lede">I checked the Claude review against the current source and applied the fixes that improve accounting or avoid clear import errors. This note separates completed code changes from decisions that need more product or data-provider clarity.</p>
     <div class="meta">
-      <span class="pill">Prior release · GitHub main + Vercel live</span>
-      <span class="pill">Follow-up fixes · local check passed</span>
+      <span class="pill">GitHub main · 3662a07</span>
+      <span class="pill">Follow-up fixes · Vercel live</span>
       <span class="pill">Regression tests · all passed</span>
       <span class="pill">Supabase migration · applied before deploy</span>
     </div>
@@ -171,8 +171,8 @@
   <section aria-labelledby="status">
     <h2 id="status">Current status</h2>
     <div class="callout">
-      <p><strong>The earlier release is on GitHub main and live on Vercel.</strong> Its Supabase migration was applied successfully first. For this follow-up, <code>npm run check</code> passed: type checks and self-tests passed, with one existing non-blocking lint warning in <code>postcss.config.mjs</code>.</p>
-      <p>The follow-up fixes are currently local and are not yet on GitHub or Vercel. No new database migration is needed for them. The preview route uses fake data; never use real financial statements for test imports.</p>
+      <p><strong>The follow-up fixes are on GitHub main in commit <code>3662a07</code> and live on Vercel.</strong> The production deployment is <a href="https://finance-dash-eivh4sq83-test11-c81f.vercel.app">finance-dash-eivh4sq83</a>, with aliases <a href="https://paisa-tracker-app.vercel.app">paisa-tracker-app.vercel.app</a> and <a href="https://finance-dash-nine.vercel.app">finance-dash-nine.vercel.app</a>. Its Supabase migration was applied successfully before deployment.</p>
+      <p><code>npm run check</code> passed: type checks and self-tests passed, with one existing non-blocking lint warning in <code>postcss.config.mjs</code>. No new database migration was needed for this follow-up. The preview route uses fake data; never use real financial statements for test imports.</p>
     </div>
   </section>
 
