@@ -1,12 +1,13 @@
 import { DEFAULT_SALARY_CUTOFF } from "./config";
 export type TxnType = "expense" | "income" | "invest" | "transfer"; // transfer = credit card bill paid from the bank
-export type Mode = "UPI" | "Card" | "Cash" | "NetBanking" | "AutoPay" | (string & {}); // plus user-added modes
+export type Mode = "UPI" | "Card" | "DebitCard" | "Cash" | "NetBanking" | "AutoPay" | (string & {}); // plus user-added modes
 
 export type Txn = {
   id: string;
   date: Date;
   amount: number;
   type: TxnType;
+  isRefund?: boolean; // a statement credit that reverses an expense; amount stays positive in storage
   category: string;
   merchant: string;
   mode: Mode;
@@ -31,6 +32,10 @@ export type SplitShare = { name: string; amount: number; settled: boolean };
 
 /** Spend on a credit card: counts as spending now, leaves the bank only when the bill is paid. */
 export const isCardSpend = (t: Txn) => t.type === "expense" && (t.mode === "Card" || !!t.account);
+/** Full amount charged to the card, including friends' shares in a split purchase. */
+export const chargedAmount = (t: Txn) => t.amount + (t.split ?? []).reduce((sum, share) => sum + share.amount, 0);
+/** Refund rows keep positive stored amounts; they reduce expense and card exposure. */
+export const expenseAmount = (t: Txn) => t.isRefund ? -t.amount : t.amount;
 
 export type RewardRule = { match: string; rate: number; capPerMonth?: number; fallbackToBase?: boolean }; // cap = maximum ₹ earned by this rule per billing cycle
 export type CreditCard = {
@@ -126,6 +131,22 @@ export const monthsBetween = (a: Date, b: Date) => (b.getFullYear() - a.getFullY
 /** The recurring day inside a given month, clamped (31 in Feb → 28/29). */
 export const dueIn = (y: number, m: number, day: number) => new Date(y, m, Math.min(day, new Date(y, m + 1, 0).getDate()));
 
+/** Move a calendar date by whole months and clamp its day (31 Jan + 1 month = 28/29 Feb). */
+export const maturityOf = (start: Date, months: number, day = start.getDate()) => dueIn(start.getFullYear(), start.getMonth() + months, day);
+
+/** Next credit-card due date, clamped to the current or next month's last day. */
+export function nextCardDue(day: number, now: Date) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let due = dueIn(now.getFullYear(), now.getMonth(), day);
+  if (due < today) due = dueIn(now.getFullYear(), now.getMonth() + 1, day);
+  return due;
+}
+
+/** Monthly RRULE that keeps the requested day and falls back to month end in shorter months. */
+export const monthlyDayRule = (day: number) => day >= 29
+  ? `BYMONTHDAY=${Array.from({ length: 32 - day }, (_, i) => day + i).join(",")},-1;BYSETPOS=1`
+  : `BYMONTHDAY=${day}`;
+
 /** Months elapsed since start for this date, or null when the item is not active then. */
 function activeMonth(r: Recurring, d: Date) {
   const n = monthsBetween(r.start, d); // 0 = first month
@@ -168,7 +189,8 @@ export function rdMaturity(monthlyDeposit: number, annualRate: number, months: n
   if (payout !== "maturity") return Math.round(monthlyDeposit * months * 100) / 100;
   const periods = periodsPerYear(frequency), factor = 1 + annualRate / (100 * periods);
   let value = 0;
-  for (let i = 0; i < months; i++) value += monthlyDeposit * factor ** (Math.max(0, months - 1 - i) * periods / 12);
+  // An RD matures one month after its final installment. The first deposit earns for `months` periods.
+  for (let i = 0; i < months; i++) value += monthlyDeposit * factor ** ((months - i) * periods / 12);
   return Math.round(value * 100) / 100;
 }
 
@@ -214,7 +236,7 @@ function demoBudgets(txns: Txn[], now: Date) {
   const a = new Date(now.getFullYear(), now.getMonth() - 1, 1), b = new Date(now.getFullYear(), now.getMonth(), 1);
   const out: Record<string, number> = {};
   for (const cat of ["Food", "Transport", "Shopping", "Entertainment", "Subscriptions", "Bills"]) {
-    const spent = txns.reduce((s, t) => (t.type === "expense" && t.category === cat && t.date >= a && t.date < b ? s + t.amount : s), 0);
+    const spent = txns.reduce((s, t) => (t.type === "expense" && t.category === cat && t.date >= a && t.date < b ? s + expenseAmount(t) : s), 0);
     out[cat] = Math.max(500, Math.round((spent * (cat === "Shopping" ? 0.8 : 1.15)) / 500) * 500);
   }
   return out;

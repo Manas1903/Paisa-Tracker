@@ -116,7 +116,7 @@ export function NetWorthCard({ nw, ms, T, i, className = "" }: {
   const now = nw[nw.length - 1], before = nw[nw.length - 2];
   const delta = now.value - before.value;
   return (
-    <Card i={i} className={className} title="Net worth" subtitle="Bank + investments − EMIs left − card dues" icon={<Wallet size={16} />} pop="green">
+    <Card i={i} className={className} title="Net worth" subtitle="Bank + investments − loan balance − card dues" icon={<Wallet size={16} />} pop="green">
       <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
         <div className="text-4xl font-black tracking-tighter"><Ticker value={now.value} format={fmt} /></div>
         <div className={`pb-1 text-sm font-semibold ${delta >= 0 ? "text-pop-green" : "text-pop-pink"}`}>{delta >= 0 ? "▲" : "▼"} {fmtShort(Math.abs(delta))} this month</div>

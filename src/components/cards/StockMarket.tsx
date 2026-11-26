@@ -32,15 +32,18 @@ export function StockMarketCard({ positions, quotes, onSaveQuote, demo = false, 
   const [loading, setLoading] = useState(!demo);
   const [error, setError] = useState("");
   const saveQuote = useRef(onSaveQuote);
+  const quotesRef = useRef(quotes);
   useEffect(() => { saveQuote.current = onSaveQuote; }, [onSaveQuote]);
+  useEffect(() => { quotesRef.current = quotes; }, [quotes]);
   const totalInvested = useMemo(() => positions.reduce((n, p) => n + p.invested, 0), [positions]);
   const quoteSymbols = useMemo(() => [...new Set([...positions.map((p) => p.symbol), symbol])], [positions, symbol]);
+  const quoteSymbolKey = quoteSymbols.join("|");
 
   useEffect(() => {
     if (demo) return;
     let active = true;
     const to = new Date(); const from = new Date(to); from.setDate(to.getDate() - 120);
-    Promise.all(quoteSymbols.map(async (qualified) => {
+    Promise.all(quoteSymbolKey.split("|").filter(Boolean).map(async (qualified) => {
       try {
         const [exchange = "NSE", ticker = ""] = qualified.toUpperCase().split(":");
         if (!ticker || !["NSE", "BSE"].includes(exchange)) throw new Error("Use a symbol such as NSE:RELIANCE or BSE:500325.");
@@ -58,12 +61,12 @@ export function StockMarketCard({ positions, quotes, onSaveQuote, demo = false, 
       setError(loaded.find((result) => result.error)?.error ?? "");
       for (const { qualified, rows } of ready) {
         const last = rows[rows.length - 1];
-        if (quotes[qualified]?.price !== last.close) saveQuote.current(qualified, last.close, `${last.date}T00:00:00+05:30`);
+        if (quotesRef.current[qualified]?.price !== last.close) saveQuote.current(qualified, last.close, `${last.date}T00:00:00+05:30`);
       }
     })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [quoteSymbols, refresh, demo, positions, quotes]);
+  }, [quoteSymbolKey, refresh, demo]);
 
   // EOD history is refreshed after NSE pre-open, once per day; there is no intraday polling.
   useEffect(() => {
@@ -117,7 +120,7 @@ export function StockMarketCard({ positions, quotes, onSaveQuote, demo = false, 
     <p className="mb-4 text-xs text-ink3">Daily end-of-day prices update once each day around 9:15 AM IST when available. No intraday streaming. The quote may be delayed to the last published trading day.</p>
     {!positions.length ? <Empty>Add a Stocks investment with units, purchase price and date to start tracking a portfolio.</Empty> : <ul className="divide-y divide-line">
       {positions.map((p) => <li key={p.symbol} className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
-        <button type="button" onClick={() => choose(p.symbol)} className="min-w-0 text-left"><div className="truncate text-sm font-bold">{p.name} <span className="font-normal text-ink3">· {p.units.toLocaleString("en-IN")} shares · avg {fmt(p.averageCost)}</span></div><div className="text-xs text-ink3">Invested {fmt(p.invested)} · {p.xirr !== undefined ? `XIRR ${p.xirr.toFixed(2)}%` : "XIRR unavailable"}</div></button>
+        <button type="button" onClick={() => choose(p.symbol)} className="min-w-0 text-left"><div className="truncate text-sm font-bold">{p.name} <span className="font-normal text-ink3">· {p.units.toLocaleString("en-IN")} shares · avg {fmt(p.averageCost)}</span></div><div className="text-xs text-ink3">Invested {fmt(p.invested)} · {p.xirr !== undefined ? `XIRR (annualized) ${p.xirr.toFixed(2)}%` : "XIRR unavailable"}</div></button>
         <div className="text-sm sm:text-right"><div className="font-bold tabular-nums">{p.value === undefined ? "Add current price" : fmt(p.value)}</div><div className={`text-xs tabular-nums ${p.gain !== undefined && p.gain >= 0 ? "text-pop-green" : "text-pop-pink"}`}>{p.gain === undefined ? "P&L pending quote" : `${fmt(p.gain)} (${p.gainPct?.toFixed(2)}%)`}</div></div>
         <div className="flex items-center gap-1.5"><span className="text-xs text-ink3">₹</span><input aria-label={`${p.name} current price`} inputMode="decimal" value={prices[p.symbol] ?? (quotes[p.symbol] ? String(quotes[p.symbol].price) : "")} onChange={(e) => setPrices((v) => ({ ...v, [p.symbol]: e.target.value.replace(/[^\d.]/g, "") }))} className="w-24 rounded-xl border border-line bg-soft px-2.5 py-2 text-sm tabular-nums outline-none focus:border-ink" placeholder="Current"/><button type="button" onClick={() => { const price = Number(prices[p.symbol] ?? quotes[p.symbol]?.price); if (price > 0) { onSaveQuote(p.symbol, price); setPrices((v) => ({ ...v, [p.symbol]: String(price) })); } }} className="rounded-xl bg-ink px-3 py-2 text-xs font-semibold text-card">Save</button></div>
         {quotes[p.symbol] && <p className="col-span-full text-[10px] text-ink3">Price as of {new Date(quotes[p.symbol].updatedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</p>}

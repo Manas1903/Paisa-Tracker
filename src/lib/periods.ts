@@ -1,4 +1,4 @@
-import type { Txn, TxnType } from "./data";
+import { expenseAmount, type Txn, type TxnType } from "./data";
 import { DAY } from "./dates";
 
 export type Period = "day" | "week" | "month" | "year";
@@ -37,11 +37,11 @@ export function ranges(p: Period, now: Date): Ranges {
 export const inRange = (t: Txn, a: Date, b: Date) => t.date >= a && t.date < b;
 
 export const total = (txns: Txn[], type: TxnType, a: Date, b: Date) =>
-  txns.reduce((s, t) => (t.type === type && inRange(t, a, b) ? s + t.amount : s), 0);
+  txns.reduce((s, t) => (t.type === type && inRange(t, a, b) ? s + (type === "expense" ? expenseAmount(t) : t.amount) : s), 0);
 
 export function groupBy(txns: Txn[], type: TxnType, a: Date, b: Date, key: (t: Txn) => string = (t) => t.category) {
   const m = new Map<string, number>();
-  for (const t of txns) if (t.type === type && inRange(t, a, b)) m.set(key(t), (m.get(key(t)) ?? 0) + t.amount);
+  for (const t of txns) if (t.type === type && inRange(t, a, b)) m.set(key(t), (m.get(key(t)) ?? 0) + (type === "expense" ? expenseAmount(t) : t.amount));
   return m;
 }
 
@@ -66,7 +66,7 @@ function bucketOf(p: Period, d: Date) {
 export function cumulative(txns: Txn[], p: Period, a: Date, b: Date, upTo?: Date) {
   const n = bucketLabels(p).length;
   const per = new Array<number>(n).fill(0);
-  for (const t of txns) if (t.type === "expense" && inRange(t, a, b)) per[bucketOf(p, t.date)] += t.amount;
+  for (const t of txns) if (t.type === "expense" && inRange(t, a, b)) per[bucketOf(p, t.date)] += expenseAmount(t);
   const last = upTo ? bucketOf(p, upTo) : bucketOf(p, new Date(b.getTime() - 1));
   let run = 0;
   return per.map((v, i) => (i > last ? null : (run += v)));

@@ -2,8 +2,8 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Loader2, Search, Trash2, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
-import { calculateEmi, fdMaturity, rdMaturity, RECURRING_KINDS, dueIn, kindDefaults, type Goal, type Recurring, type RecurringKind } from "@/lib/data";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { calculateEmi, fdMaturity, maturityOf, rdMaturity, RECURRING_KINDS, dueIn, kindDefaults, type Goal, type Recurring, type RecurringKind } from "@/lib/data";
 import { loadNav } from "@/lib/mf";
 import { todayYmd as today, ymd } from "@/lib/dates";
 
@@ -14,22 +14,36 @@ export function Modal({ open, onClose, title, children, onSubmit, busy, submitLa
   open: boolean; onClose: () => void; title: string; children: ReactNode; onSubmit: () => void; busy?: boolean; submitLabel?: string;
   onDelete?: () => void;
 }) {
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const previous = document.activeElement as HTMLElement | null;
+    const first = dialogRef.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]');
+    (first ?? dialogRef.current)?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeRef.current();
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const items = [...dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')];
+      if (!items.length) { e.preventDefault(); dialogRef.current.focus(); return; }
+      const firstItem = items[0], lastItem = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === firstItem) { e.preventDefault(); lastItem.focus(); }
+      else if (!e.shiftKey && document.activeElement === lastItem) { e.preventDefault(); firstItem.focus(); }
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    return () => { window.removeEventListener("keydown", onKey); previous?.focus(); };
+  }, [open]);
   return (
     <AnimatePresence>
       {open && (
         <motion.div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-sm sm:items-center"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, pointerEvents: "none" }} onClick={onClose}>
-          <motion.form onSubmit={(e) => { e.preventDefault(); if (!busy) onSubmit(); }} onClick={(e) => e.stopPropagation()}
+          <motion.form ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="modal-title" tabIndex={-1} onSubmit={(e) => { e.preventDefault(); if (!busy) onSubmit(); }} onClick={(e) => e.stopPropagation()}
             className="max-h-[92dvh] w-full max-w-md space-y-4 overflow-y-auto rounded-t-[32px] border border-line bg-card p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-[32px] sm:pb-6"
             initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }} transition={{ type: "spring", stiffness: 320, damping: 30 }}>
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black tracking-tight">{title}</h2>
+              <h2 id="modal-title" className="text-2xl font-black tracking-tight">{title}</h2>
               <button type="button" onClick={onClose} className="rounded-full p-1.5 text-ink3 hover:bg-soft" aria-label="Close"><X size={18} /></button>
             </div>
             {children}
@@ -106,7 +120,7 @@ export function RecurringForm({ open, onClose, onSave, initial, onDelete, pastCo
   const amountToSave = kind === "EMI" && loanCalcOn ? calculatedEmi : Math.round(Number(amount) * 100) / 100;
   const [startYear, startMonth, startDay] = (start || today()).split("-").map(Number);
   const depositDate = new Date(startYear, startMonth - 1, startDay);
-  const estimatedMaturityDate = new Date(depositDate.getFullYear(), depositDate.getMonth() + months - (kind === "RD" ? 1 : 0), depositDate.getDate());
+  const estimatedMaturityDate = maturityOf(depositDate, months);
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);

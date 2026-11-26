@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { FileUp, Loader2, Lock, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { CATEGORIES, type Txn } from "@/lib/data";
+import { CATEGORIES, expenseAmount, type Txn } from "@/lib/data";
 import { fmt } from "@/lib/format";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 import { SOURCES, checkStatement, guessCard, parsePdf, parseTable, toDrafts, type Draft, type Source } from "@/lib/statements/parse";
@@ -53,7 +53,7 @@ export function ImportSheet({ open, onClose, existing, onImport, cards, onAddCar
       const acct = card ? account || guessCard(SOURCES.find((x) => x.id === source)!.label, cards) : "";
       setAccount(acct);
       setRows(toDrafts(parsed.lines, card, existing, loadLearned(), { account: acct, cards }).map((d, i) =>
-        c.badRows.includes(i) ? { ...d, note: "Check this row: balance doesn't add up" } : d));
+        ({ ...d, id: crypto.randomUUID(), ...(c.badRows.includes(i) ? { note: "Check this row: balance doesn't add up" } : {}) })));
       setNeedPw("");
     } catch (e) {
       if (e instanceof PasswordNeeded) setNeedPw(e.wrong ? "wrong" : "ask");
@@ -69,7 +69,7 @@ export function ImportSheet({ open, onClose, existing, onImport, cards, onAddCar
     setRows((rs) => rs && rs.map((r) => ({ ...r, account: name || undefined, merchant: r.type === "transfer" ? `${name || "Card"} bill` : r.merchant })));
   };
 
-  const total = picked.filter((r) => r.type === "expense").reduce((a, r) => a + r.amount, 0);
+  const total = picked.filter((r) => r.type === "expense").reduce((a, r) => a + expenseAmount(r), 0);
   const update = (key: string, patch: Partial<Draft>) => setRows((rs) => rs!.map((r) => (r.key === key ? { ...r, ...patch } : r)));
 
   async function doImport() {
@@ -80,7 +80,7 @@ export function ImportSheet({ open, onClose, existing, onImport, cards, onAddCar
     const learned = loadLearned();
     for (const r of picked) learned[r.merchant.toLowerCase()] = r.category;
     try { localStorage.setItem(LEARN_KEY, JSON.stringify(learned)); } catch {}
-    const ok = await onImport(picked.map((r): Txn => ({ id: crypto.randomUUID(), date: r.date, amount: r.amount, type: r.type, category: r.category, merchant: r.merchant, mode: r.mode, account: r.account })));
+    const ok = await onImport(picked.map((r): Txn => ({ id: r.id, date: r.date, amount: r.amount, type: r.type, category: r.category, merchant: r.merchant, mode: r.mode, account: r.account, isRefund: r.isRefund })));
     setBusy(false);
     if (ok) { setRows(null); setFile(null); setPassword(""); onClose(); }
   }
@@ -88,13 +88,13 @@ export function ImportSheet({ open, onClose, existing, onImport, cards, onAddCar
   return (
     <AnimatePresence>
       {open && (
-        <motion.div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-sm sm:items-center"
+        <motion.div role="dialog" aria-modal="true" aria-labelledby="import-title" className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-sm sm:items-center"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, pointerEvents: "none" }} onClick={onClose}>
           <motion.div onClick={(e) => e.stopPropagation()} initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
             transition={{ type: "spring", stiffness: 320, damping: 30 }}
             className="flex max-h-[92dvh] w-full max-w-2xl flex-col rounded-t-[32px] border border-line bg-card p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-[32px] sm:pb-6">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-2xl font-black tracking-tight">Import statement</h2>
+              <h2 id="import-title" className="text-2xl font-black tracking-tight">Import statement</h2>
               <button type="button" onClick={onClose} className="rounded-full p-1.5 text-ink3 hover:bg-soft" aria-label="Close"><X size={18} /></button>
             </div>
 
@@ -195,7 +195,7 @@ export function ImportSheet({ open, onClose, existing, onImport, cards, onAddCar
                           )}
                         </div>
                       </div>
-                      <span className={`shrink-0 text-sm font-bold tabular-nums ${r.type === "income" ? "text-pop-green" : r.type === "transfer" ? "text-ink3" : ""}`}>{r.type === "income" ? "+" : r.type === "transfer" ? "⇄ " : "−"}{fmt(r.amount)}</span>
+                      <span className={`shrink-0 text-sm font-bold tabular-nums ${r.type === "income" || r.isRefund ? "text-pop-green" : r.type === "transfer" ? "text-ink3" : ""}`}>{r.type === "income" || r.isRefund ? "+" : r.type === "transfer" ? "⇄ " : "−"}{fmt(r.amount)}{r.isRefund ? " refund" : ""}</span>
                     </li>
                   ))}
                 </ul>

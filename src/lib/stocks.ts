@@ -10,6 +10,7 @@ export type StockPosition = {
 function xirr(flows: { date: Date; amount: number }[]): number | undefined {
   if (flows.length < 2 || flows[0].amount >= 0 || flows[flows.length - 1].amount <= 0) return undefined;
   const start = flows[0].date.getTime();
+  if (!(flows[flows.length - 1].date.getTime() - start > 0)) return undefined;
   const npv = (rate: number) => flows.reduce((sum, f) => sum + f.amount / (1 + rate) ** ((f.date.getTime() - start) / 86400000 / 365), 0);
   let low = -0.9999, high = 10, fLow = npv(low), fHigh = npv(high);
   if (!Number.isFinite(fLow) || !Number.isFinite(fHigh) || fLow * fHigh > 0) return undefined;
@@ -24,7 +25,7 @@ function xirr(flows: { date: Date; amount: number }[]): number | undefined {
 export function stockPositions(txns: Txn[], quotes: Record<string, StockQuote> = {}, at = new Date()): StockPosition[] {
   const lotsBySymbol = new Map<string, Txn[]>();
   for (const t of txns) {
-    if (t.type !== "invest" || t.category !== "Stocks" || !t.stockSymbol || !(t.stockQuantity && t.stockUnitPrice)) continue;
+    if (t.type !== "invest" || t.category !== "Stocks" || !t.stockSymbol || !(t.stockQuantity && t.stockUnitPrice) || t.date > at) continue;
     const list = lotsBySymbol.get(t.stockSymbol) ?? [];
     list.push(t); lotsBySymbol.set(t.stockSymbol, list);
   }

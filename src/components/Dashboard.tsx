@@ -6,8 +6,8 @@ import {
   Moon, PieChart, PiggyBank, Plus, Receipt, Repeat, Scale, Store, Sun, TrendingUp, Wallet,
 } from "lucide-react";
 import confetti from "canvas-confetti";
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CATEGORIES, colorOf, displayCategory, emisPaid, forMonthMaths, isCardSpend, lastEmi, nextDue, type Book, type Goal, type Layout, type Recurring, type Txn } from "@/lib/data";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { CATEGORIES, colorOf, displayCategory, emisPaid, expenseAmount, forMonthMaths, lastEmi, nextDue, type Book, type Goal, type Layout, type Recurring, type Txn } from "@/lib/data";
 import { addGoal, addRecurring, addTxn, addTxns, deleteRow, saveLayout, saveSettings, setOpeningBalance, supabase, updateGoal, updateRecurring, updateTxn } from "@/lib/store";
 import { BalanceForm, GoalForm, RecurringForm } from "@/components/sheets/Forms";
 import { fmt, fmtDate, fmtShort } from "@/lib/format";
@@ -167,7 +167,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
   }, [mot.ms.justCrossed]);
 
   // ---- charts ----
-  const cats = [...CATEGORIES.map((c) => c.name), "Other"];
+  const cats = useMemo(() => [...CATEGORIES.map((c) => c.name), "Other"], []);
   const byCat = useMemo(() => groupBy(txns, "expense", r.curStart, r.now, (t) => displayCategory(t.category)), [txns, r]);
   const byCatPrev = useMemo(() => groupBy(txns, "expense", r.prevStart, r.prevSameTime, (t) => displayCategory(t.category)), [txns, r]);
   // This chart is a cash-outflow view: card purchases move here when their bill is paid,
@@ -177,17 +177,15 @@ export default function Dashboard({ book, setBook, email, onReset }: {
     for (const t of txns) {
       if (!inRange(t, r.curStart, r.now)) continue;
       let name: string | null = null;
-      if (t.type === "expense" && !isCardSpend(t)) name = displayCategory(t.category);
-      else if (t.type === "transfer") name = "Card bills";
+      if (t.type === "expense") name = displayCategory(t.category);
       else if (t.type === "invest") name = "Investments";
-      if (name) sums.set(name, (sums.get(name) ?? 0) + t.amount);
+      if (name) sums.set(name, (sums.get(name) ?? 0) + (t.type === "expense" ? expenseAmount(t) : t.amount));
     }
     const fixed = new Set(cats);
-    return [...sums].map(([name, value]) => ({
-      name, value, color: name === "Card bills" ? (dark ? "#ff9f43" : "#c45d12")
-        : name === "Investments" ? (dark ? "#b9f26a" : "#56820e") : colorOf(fixed.has(name) ? name : "Other", dark),
+    return [...sums].filter(([, value]) => value > 0).map(([name, value]) => ({
+      name, value, color: name === "Investments" ? (dark ? "#b9f26a" : "#56820e") : colorOf(fixed.has(name) ? name : "Other", dark),
     })).sort((a, b) => b.value - a.value);
-  }, [txns, r, dark]);
+  }, [txns, r, dark, cats]);
   const slices: Slice[] = outflows;
   const spentTotal = slices.reduce((s, x) => s + x.value, 0);
 
@@ -345,6 +343,17 @@ export default function Dashboard({ book, setBook, email, onReset }: {
     try { await saveSettings(st); setBook((b) => ({ ...b, ...st })); flash("Saved"); }
     catch (e) { fail(e); throw e; }
   }
+  const savedQuotes = useRef(book.stockQuotes ?? {});
+  const quoteWrite = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => { savedQuotes.current = book.stockQuotes ?? {}; }, [book.stockQuotes]);
+  function saveStockQuote(symbol: string, price: number, updatedAt?: string) {
+    const next = { ...savedQuotes.current, [symbol]: { price, updatedAt: updatedAt ?? new Date().toISOString() } };
+    savedQuotes.current = next;
+    setBook((b) => ({ ...b, stockQuotes: next }));
+    if (email === "preview@local") return;
+    quoteWrite.current = quoteWrite.current.catch(() => {}).then(() => saveSettings({ stockQuotes: next }));
+    void quoteWrite.current.catch(() => {});
+  }
   const addCard = (name: string) => { if (!cards.some((c) => c.name.toLowerCase() === name.toLowerCase())) saveCardsSettings({ cards: [...cards, { name }] }).catch(() => {}); };
 
   /** Mark every open share of this friend as paid back. */
@@ -421,7 +430,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
             </Card>
     ) },
     { key: "where", title: "Where it went", node: (
-            <Card i={1} title="Where it went" subtitle={`Cash outflow this ${period} · card purchases count when the bill is paid`} icon={<PieChart size={16} />} pop="pink">
+            <Card i={1} title="Where it went" subtitle={`Spending by purchase date this ${period} · card swipes count here; bill payments only affect bank balance`} icon={<PieChart size={16} />} pop="pink">
               <div className="relative">
                 <Chart option={donutOption(T, slices)} height={190} />
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
@@ -544,7 +553,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
               loading={codes.some((c) => !navs[c]) && !navErr} error={navErr} unlinked={mf.unlinked} />
     ) },
     { key: "stockMarket", title: "Stocks", node: (
-      <StockMarketCard positions={stocks} quotes={book.stockQuotes ?? {}} dark={dark} demo={email === "preview@local"} onSaveQuote={(symbol, price, updatedAt) => saveCardsSettings({ stockQuotes: { ...(book.stockQuotes ?? {}), [symbol]: { price, updatedAt: updatedAt ?? new Date().toISOString() } } })} i={1} />
+      <StockMarketCard positions={stocks} quotes={book.stockQuotes ?? {}} dark={dark} demo={email === "preview@local"} onSaveQuote={saveStockQuote} i={1} />
     ) },
     { key: "fixedIncome", title: "FD / RD portfolio", node: (
       <Card i={1} className="lg:col-span-2" title="FD & RD portfolio" subtitle="Estimated from saved terms · receipt maturity values take priority" icon={<Landmark size={16} />} pop="green">
@@ -622,7 +631,8 @@ export default function Dashboard({ book, setBook, email, onReset }: {
                   {recent.map((t) => (
                     <motion.li key={t.id} layout initial={{ opacity: 0, y: -16, backgroundColor: "rgba(185,242,106,0.5)" }}
                       animate={{ opacity: 1, y: 0, backgroundColor: "rgba(185,242,106,0)" }} exit={{ opacity: 0 }} transition={{ duration: 0.7 }}
-                      onClick={() => setEditTxn(t)} className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2.5 hover:bg-soft">
+                      className="rounded-xl hover:bg-soft">
+                      <button type="button" onClick={() => setEditTxn(t)} className="flex w-full items-center gap-3 px-2 py-2.5 text-left">
                       {t.account ? <CardChip name={t.account} /> : (
                         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] text-xs font-black text-white"
                           style={{ background: t.type === "expense" ? colorOf(displayCategory(t.category), dark) : t.type === "income" ? "#10b981" : "#8b5cf6" }}>
@@ -633,7 +643,8 @@ export default function Dashboard({ book, setBook, email, onReset }: {
                         <div className="truncate text-sm font-medium">{t.merchant}</div>
                         <div className="text-[11px] text-ink3">{t.category} · {t.account ?? t.mode} · {fmtDate(t.date)}</div>
                       </div>
-                      <span className={`text-sm font-bold tabular-nums ${t.type === "income" ? "text-pop-green" : t.type === "transfer" ? "text-ink3" : ""}`}>{t.type === "income" ? "+" : t.type === "transfer" ? "⇄ " : "−"}{fmt(t.amount)}</span>
+                      <span className={`text-sm font-bold tabular-nums ${t.type === "income" || t.isRefund ? "text-pop-green" : t.type === "transfer" ? "text-ink3" : ""}`}>{t.type === "income" || t.isRefund ? "+" : t.type === "transfer" ? "⇄ " : "−"}{fmt(t.amount)}{t.isRefund ? " refund" : ""}</span>
+                      </button>
                     </motion.li>
                   ))}
                 </AnimatePresence>

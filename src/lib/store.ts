@@ -8,7 +8,7 @@ import { ymd } from "./dates";
 export const supabase = createClient(env.supabaseUrl, env.supabaseAnonKey);
 
 type TxnRow = {
-  id: string; date: string; amount: number; type: TxnType; category: string; merchant: string; mode: string;
+  id: string; date: string; amount: number; type: TxnType; category: string; merchant: string; mode: string; is_refund: boolean | null;
   recurring_id: string | null; account: string | null; split: SplitShare[] | null; annual_rate: number | string | null; tenure_months: number | null;
   institution: string | null; product: string | null; compounding_frequency: Txn["compoundingFrequency"] | null; payout_frequency: Txn["payoutFrequency"] | null;
   maturity_amount: number | string | null; maturity_date: string | null; maturity_instruction: Txn["maturityInstruction"] | null;
@@ -24,9 +24,9 @@ type RecRow = {
 
 const localDate = (s: string) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 
-const TXN_COLS = "id,date,amount,type,category,merchant,mode,recurring_id,account,split,annual_rate,tenure_months,institution,product,compounding_frequency,payout_frequency,maturity_amount,maturity_date,maturity_instruction,stock_symbol,stock_quantity,stock_unit_price";
-const toTxn = ({ recurring_id, account, split, annual_rate, tenure_months, institution, product, compounding_frequency, payout_frequency, maturity_amount, maturity_date, maturity_instruction, stock_symbol, stock_quantity, stock_unit_price, ...r }: TxnRow): Txn => ({
-  ...r, amount: Number(r.amount), date: new Date(r.date), recurringId: recurring_id ?? undefined, account: account ?? undefined,
+const TXN_COLS = "id,date,amount,type,category,merchant,mode,is_refund,recurring_id,account,split,annual_rate,tenure_months,institution,product,compounding_frequency,payout_frequency,maturity_amount,maturity_date,maturity_instruction,stock_symbol,stock_quantity,stock_unit_price";
+const toTxn = ({ is_refund, recurring_id, account, split, annual_rate, tenure_months, institution, product, compounding_frequency, payout_frequency, maturity_amount, maturity_date, maturity_instruction, stock_symbol, stock_quantity, stock_unit_price, ...r }: TxnRow): Txn => ({
+  ...r, amount: Number(r.amount), date: new Date(r.date), isRefund: !!is_refund || undefined, recurringId: recurring_id ?? undefined, account: account ?? undefined,
   annualRate: annual_rate == null ? undefined : Number(annual_rate), tenureMonths: tenure_months ?? undefined,
   institution: institution ?? undefined, product: product ?? undefined, compoundingFrequency: compounding_frequency ?? undefined, payoutFrequency: payout_frequency ?? undefined,
   maturityAmount: maturity_amount == null ? undefined : Number(maturity_amount), maturityDate: maturity_date ? localDate(maturity_date) : undefined, maturityInstruction: maturity_instruction ?? undefined,
@@ -34,7 +34,7 @@ const toTxn = ({ recurring_id, account, split, annual_rate, tenure_months, insti
   split: split?.length ? split : undefined,
 });
 const fromTxn = (t: Txn) => ({
-  date: t.date.toISOString(), amount: t.amount, type: t.type, category: t.category, merchant: t.merchant, mode: t.mode,
+  id: t.id || undefined, date: t.date.toISOString(), amount: t.amount, type: t.type, category: t.category, merchant: t.merchant, mode: t.mode, is_refund: t.isRefund ?? false,
   recurring_id: t.recurringId ?? null, account: t.account ?? null, split: t.split?.length ? t.split : null,
   annual_rate: t.annualRate ?? null, tenure_months: t.tenureMonths ?? null, institution: t.institution ?? null, product: t.product ?? null,
   compounding_frequency: t.compoundingFrequency ?? null, payout_frequency: t.payoutFrequency ?? null, maturity_amount: t.maturityAmount ?? null,
@@ -101,7 +101,7 @@ export async function addTxn(t: Txn): Promise<Txn> {
 export async function addTxns(ts: Txn[]): Promise<Txn[]> {
   const out: Txn[] = [];
   for (let i = 0; i < ts.length; i += INSERT_BATCH) {
-    out.push(...(check(await supabase.from("transactions").insert(ts.slice(i, i + INSERT_BATCH).map(fromTxn)).select(TXN_COLS)) as TxnRow[]).map(toTxn));
+    out.push(...(check(await supabase.from("transactions").upsert(ts.slice(i, i + INSERT_BATCH).map(fromTxn), { onConflict: "id" }).select(TXN_COLS)) as TxnRow[]).map(toTxn));
   }
   return out;
 }

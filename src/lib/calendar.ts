@@ -1,4 +1,4 @@
-import { dueIn, lastEmi, nextDue, type CreditCard, type Recurring, type Txn } from "./data";
+import { lastEmi, maturityOf, monthlyDayRule, nextCardDue, nextDue, type CreditCard, type Recurring, type Txn } from "./data";
 
 /** Reminders as a calendar file: every EMI, SIP, bill, rent, subscription and card due date repeats
  *  in the phone's calendar with an alert the day before. No server, no push permission needed. */
@@ -11,11 +11,10 @@ export function remindersIcs(recurring: Recurring[], cards: CreditCard[], now: D
     "BEGIN:VALARM", "TRIGGER:-PT15H", "ACTION:DISPLAY", `DESCRIPTION:${esc(title)} tomorrow`, "END:VALARM", "END:VEVENT",
   ].join("\r\n");
   // Day 29–31 repeats on the last day in short months (BYMONTHDAY=-1) instead of being skipped.
-  const monthDay = (day: number) => (day >= 29 ? -1 : day);
   const events: string[] = [];
   for (const r of recurring) {
     if ((r.kind === "FD" || r.kind === "RD") && r.tenure && r.annualRate !== undefined) {
-      const maturity = r.maturityDate ?? dueIn(r.start.getFullYear(), r.start.getMonth() + r.tenure - (r.kind === "RD" ? 1 : 0), r.day);
+      const maturity = r.maturityDate ?? maturityOf(r.start, r.tenure, r.day);
       if (maturity >= new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
         events.push(event(`maturity-rec-${r.id ?? r.name}`, `🏦 ${r.kind} maturity: ${r.name}`, maturity));
       }
@@ -24,18 +23,18 @@ export function remindersIcs(recurring: Recurring[], cards: CreditCard[], now: D
     if (!first) continue;
     const verb = r.type === "income" ? "💰" : r.type === "invest" ? "📈" : "💸";
     const until = r.tenure ? `;UNTIL=${d8(lastEmi(r))}` : "";
-    const rule = r.kind === "FD" ? undefined : r.month !== undefined ? `RRULE:FREQ=YEARLY${until}` : `RRULE:FREQ=MONTHLY;BYMONTHDAY=${monthDay(r.day)}${until}`;
+    const rule = r.kind === "FD" ? undefined : r.month !== undefined ? `RRULE:FREQ=YEARLY${until}` : `RRULE:FREQ=MONTHLY;${monthlyDayRule(r.day)}${until}`;
     events.push(event(`rec-${r.id ?? r.name}`, `${verb} ${r.name} ₹${Math.round(r.amount).toLocaleString("en-IN")}`, first, rule));
   }
   for (const t of txns.filter((t) => t.type === "invest" && (t.category === "FD" || t.category === "RD") && t.annualRate !== undefined && t.tenureMonths && !t.recurringId)) {
-    const maturity = t.maturityDate ?? new Date(t.date.getFullYear(), t.date.getMonth() + t.tenureMonths! - (t.category === "RD" ? 1 : 0), t.date.getDate());
+    const maturity = t.maturityDate ?? maturityOf(t.date, t.tenureMonths!);
     if (maturity >= new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
       events.push(event(`maturity-txn-${t.id}`, `🏦 ${t.category} maturity: ${t.merchant || t.category}`, maturity));
     }
   }
   for (const c of cards.filter((c) => c.dueDay)) {
-    const first = new Date(now.getFullYear(), now.getMonth() + (now.getDate() > c.dueDay! ? 1 : 0), Math.min(c.dueDay!, 28));
-    events.push(event(`card-${c.name}`, `💳 ${c.name} bill due`, first, `RRULE:FREQ=MONTHLY;BYMONTHDAY=${monthDay(c.dueDay!)}`));
+    const first = nextCardDue(c.dueDay!, now);
+    events.push(event(`card-${c.name}`, `💳 ${c.name} bill due`, first, `RRULE:FREQ=MONTHLY;${monthlyDayRule(c.dueDay!)}`));
   }
   return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Paisa Tracker//EN", "CALSCALE:GREGORIAN", "X-WR-CALNAME:Paisa reminders", ...events, "END:VCALENDAR"].join("\r\n");
 }

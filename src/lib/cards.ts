@@ -1,4 +1,4 @@
-import { dueIn, type CreditCard, type Txn } from "./data";
+import { chargedAmount, dueIn, type CreditCard, type Txn } from "./data";
 import { CARD_REGISTRY } from "./cardRegistry";
 
 /** Known cards/accounts, drawn as small colour chips. Our own artwork: issuer colours + names,
@@ -43,8 +43,11 @@ export function cardStyle(name: string): CardStyle {
 export const rewardsFor = (c: CreditCard) => c.rewards ?? CARD_REGISTRY[cardStyle(c.name).name]?.rewards;
 
 /** "swiggy|zomato" → true if any keyword appears (plain text, case-insensitive; "|" means or). */
-export const keywordsMatch = (keywords: string, text: string) =>
-  keywords.split("|").map((k) => k.trim().toLowerCase()).some((k) => k && text.toLowerCase().includes(k));
+export const keywordsMatch = (keywords: string, text: string) => {
+  const normalized = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+  return keywords.split("|").map((k) => k.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim())
+    .some((k) => !!k && normalized.includes(` ${k} `));
+};
 
 /** % value back this card gives on a spend (best matching bonus, else base). */
 export function rewardRate(c: CreditCard, merchant: string, category: string) {
@@ -100,7 +103,7 @@ export function estimateCardReward(c: CreditCard, txns: Txn[], merchant: string,
 
   const earnedByRule = new Map<string, number>();
   let spendUsed = 0;
-  const prior = txns.filter((t) => t.type === "expense" && t.account === c.name && t.id !== ignoreTxnId && t.date >= cycle.start && t.date <= date)
+  const prior = txns.filter((t) => t.type === "expense" && !t.isRefund && t.account === c.name && t.id !== ignoreTxnId && t.date >= cycle.start && t.date <= date)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
   const apply = (m: string, cat: string, spend: number) => {
     const r = rewardRule(c, m, cat);
@@ -130,7 +133,7 @@ export function estimateCardReward(c: CreditCard, txns: Txn[], merchant: string,
     return rewards.roundPerTransaction ? Math.round(amountEarned) : amountEarned;
   };
 
-  for (const t of prior) apply(t.merchant, t.category, t.amount);
+  for (const t of prior) apply(t.merchant, t.category, chargedAmount(t));
   const reward = apply(merchant, category, amount);
   return { card: c.name, reward, effectiveRate: reward / amount * 100, nominalRate: rule.rate,
     capLimited: reward + 0.000001 < amount * rule.rate / 100 };
@@ -160,14 +163,14 @@ export function rewardsEarned(c: CreditCard, txns: Txn[], from: Date, to: Date) 
   const spends = txns
     // Include the full history before `to` to consume cap usage from the
     // statement-cycle start, even when that start falls before the display range.
-    .filter((t) => t.type === "expense" && t.account === c.name && t.date < to)
+    .filter((t) => t.type === "expense" && !t.isRefund && t.account === c.name && t.date < to)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
   let total = 0;
   for (const t of spends) {
     const rule = rewardRule(c, t.merchant, t.category);
     if (!rule || rule.rate <= 0) continue;
     const rewards = rewardsFor(c);
-    if (rewards?.minTransaction !== undefined && t.amount < rewards.minTransaction) continue;
+    if (rewards?.minTransaction !== undefined && chargedAmount(t) < rewards.minTransaction) continue;
     const date = t.date;
     let cycleStart: Date;
     if (c.statementDay) {
@@ -177,11 +180,12 @@ export function rewardsEarned(c: CreditCard, txns: Txn[], from: Date, to: Date) 
     } else {
       cycleStart = new Date(date.getFullYear(), date.getMonth(), 1);
     }
-    const cycle = `${cycleStart.getFullYear()}-${cycleStart.getMonth()}`;
+    const cycle = `${cycleStart.getFullYear()}-${cycleStart.getMonth()}-${cycleStart.getDate()}`;
     const capKey = `${cycle}:${rule.key}`;
     const spendCap = rewards?.spendCapPerMonth;
     const spendUsed = cycleSpend.get(cycle) ?? 0;
-    const eligibleSpend = spendCap === undefined ? t.amount : Math.min(t.amount, Math.max(0, spendCap - spendUsed));
+    const charged = chargedAmount(t);
+    const eligibleSpend = spendCap === undefined ? charged : Math.min(charged, Math.max(0, spendCap - spendUsed));
     cycleSpend.set(cycle, spendUsed + eligibleSpend);
     if (eligibleSpend <= 0) continue;
     const earned = (eligibleSpend * rule.rate) / 100;

@@ -5,7 +5,7 @@
  */
 import { readFileSync } from "node:fs";
 import * as XLSX from "xlsx";
-import { demoBook, forMonthMaths, lastEmi, nextDue, type Book, type Recurring, type Txn } from "../src/lib/data";
+import { demoBook, forMonthMaths, lastEmi, nextDue, maturityOf, nextCardDue, monthlyDayRule, expenseAmount, type Book, type Recurring, type Txn } from "../src/lib/data";
 import { budgetStatus } from "../src/lib/insights";
 import { bestCard, billingCycle, rewardRate, rewardsEarned, CARD_CATALOG } from "../src/lib/cards";
 import { CARD_REGISTRY, CARD_SOURCE_INFO } from "../src/lib/cardRegistry";
@@ -14,6 +14,9 @@ import { wrapped } from "../src/lib/wrapped";
 import { badges, bankFlow, cardUtilisation, challenges, fire, fundQuestions, makeQuestions, netWorth, reportCard, streaks } from "../src/lib/insights";
 import { dueItems, paidAt } from "@/components/cards/ComingUp";
 import { holdingCalc, holdingWarning } from "@/components/sheets/Forms";
+import { fixedIncomeHoldings } from "../src/lib/mf";
+import { stockPositions } from "../src/lib/stocks";
+import { total } from "../src/lib/periods";
 import { checkStatement, cleanMerchant, guessCard, parseDate, parseTable, toDrafts } from "../src/lib/statements/parse";
 
 let failed = 0;
@@ -49,6 +52,9 @@ ok("paying early ticks off that cycle", items.length === 0 || items[0].due.getMo
 ok("payments never future-dated", paidAt(new Date(2026, 10, 24), now) <= now);
 ok("far-future item still has a due date", !!nextDue({ ...rent, start: new Date(2028, 5, 10), day: 10 }, now));
 ok("day 31 clamps to Feb", lastEmi({ ...rent, kind: "EMI", day: 31, start: new Date(2026, 0, 31), tenure: 2 }).getDate() === 28);
+ok("maturity date clamps at month end", maturityOf(new Date(2026, 0, 31), 1).getDate() === 28);
+ok("card due date is today when due today", nextCardDue(24, new Date(2026, 10, 24)).getDate() === 24);
+ok("monthly reminder falls back to month end", monthlyDayRule(30).includes("-1"));
 ok("renamed item still matched by link", dueItems([{ ...rent, name: "House rent" }], [nov], new Date(2026, 10, 20)).every((i) => i.due.getMonth() !== 10));
 
 // --- net worth / quiz
@@ -81,6 +87,18 @@ ok("bank-side card bill → transfer, included, not spending", !!bill && bill.in
 const twice = toDrafts(parsed.lines, false, [{ ...T(bill!.date, bill!.amount, "transfer"), account: "SBI Pulse" }], {});
 ok("bill already logged from the other statement → duplicate", twice.some((d) => d.type === "transfer" && !d.include && d.note === "Already logged"));
 ok("card guessed from statement text", guessCard("PAYMENT TO SBI CARD", ["HDFC Swiggy", "SBI Pulse"]) === "SBI Pulse");
+const statementDay = new Date(2026, 10, 5);
+const ambiguousBill = toDrafts([{ date: statementDay, desc: "ELECTRICITY BILLPAY BESCOM", amount: 2200, credit: false }], false, [], {}, { cards: ["SBI Pulse"] })[0];
+ok("utility billpay stays an expense", ambiguousBill.type === "expense");
+const explicitBill = toDrafts([{ date: statementDay, desc: "IB BILLPAY SBI CARD", amount: 2200, credit: false }], false, [], {}, { cards: ["SBI Pulse"] })[0];
+ok("known-card IB BILLPAY is a transfer", explicitBill.type === "transfer");
+const refundDraft = toDrafts([{ date: statementDay, desc: "AMAZON REFUND", amount: 500, credit: true }], false, [], {})[0];
+ok("statement refund reduces expense", refundDraft.type === "expense" && refundDraft.isRefund === true && expenseAmount(refundDraft) === -500);
+const debitPos = toDrafts([{ date: statementDay, desc: "POS 1234 ZOMATO", amount: 500, credit: false }], false, [], {})[0];
+ok("bank POS purchase uses debit card mode, not credit card", debitPos.mode === "DebitCard" && debitPos.type === "expense");
+const unknownDirection = toDrafts([{ date: statementDay, desc: "BANK ROW", amount: 500, credit: false, uncertain: true }], false, [], {})[0];
+ok("unknown bank debit or credit requires review", !unknownDirection.include && unknownDirection.note === "Check debit or credit");
+ok("unknown statement direction cannot pass reconciliation", checkStatement({ lines: [{ date: statementDay, desc: "BANK ROW", amount: 500, credit: false, uncertain: true }] }).balanced === false);
 
 // --- salary cut-off: 30 Aug salary counts for September, spending keeps its date
 const shifted = forMonthMaths([T(new Date(2026, 7, 30), 100000, "income", "Employer", "Salary"), T(new Date(2026, 7, 30), 500, "expense")], 25);
@@ -95,9 +113,28 @@ const cardFlow = bankFlow([
   { ...T(new Date(2026, 10, 10), 30000, "transfer", "SBI Pulse bill", "Card bill", "NetBanking"), account: "SBI Pulse" },
 ], new Date(2026, 10, 1));
 ok("before the bill: bank lost only UPI spend, card owes 30k", cardFlow.bankSpend === 500 && cardFlow.billsPaid === 0 && cardFlow.cardDues === 30000, cardFlow);
+ok("card purchases count in swipe month; later payment is not a second expense",
+  total([
+    { ...T(new Date(2026, 9, 5), 30000, "expense", "Amazon", "Shopping", "Card"), account: "SBI Pulse" },
+    { ...T(new Date(2026, 10, 10), 30000, "transfer", "SBI Pulse bill", "Card bill", "NetBanking"), account: "SBI Pulse" },
+  ], "expense", new Date(2026, 9, 1), new Date(2026, 10, 1)) === 30000
+  && total([
+    { ...T(new Date(2026, 9, 5), 30000, "expense", "Amazon", "Shopping", "Card"), account: "SBI Pulse" },
+    { ...T(new Date(2026, 10, 10), 30000, "transfer", "SBI Pulse bill", "Card bill", "NetBanking"), account: "SBI Pulse" },
+  ], "expense", new Date(2026, 10, 1), new Date(2026, 11, 1)) === 0);
 const nwDemo = netWorth(demoBook(now), now).at(-1)!;
 ok("net worth = cash + investments − loans − card dues + owed to you", Math.abs(nwDemo.value - (nwDemo.cash + nwDemo.invest - nwDemo.loans - nwDemo.dues + nwDemo.owed)) < 1 && nwDemo.owed === 2400);
 ok("salary credit → income/Salary", drafts.some((d) => d.type === "income" && d.category === "Salary"));
+const heldFd = { ...T(new Date(2026, 10, 24), 10000, "invest", "Test FD", "FD"), annualRate: 12, tenureMonths: 12, compoundingFrequency: "quarterly" as const };
+const held = fixedIncomeHoldings([], [heldFd], new Date(2026, 10, 25))[0];
+ok("FD estimate accrues smoothly by elapsed days", !!held && held.value > 10000 && held.value < 10010);
+const futureLoan: Recurring = { id: "future-loan", name: "Loan", kind: "EMI", type: "expense", category: "EMI", amount: 10000, day: 1, start: new Date(2026, 0, 1), tenure: 12, annualRate: 12, loanPrincipal: 100000 };
+const loanTxn = { ...T(new Date(2026, 0, 2), 10000, "expense", "Loan", "EMI"), recurringId: "future-loan" };
+const loanNow = netWorth({ ...empty, txns: [loanTxn], recurring: [futureLoan] }, new Date(2026, 0, 3), 1)[0];
+ok("known-rate loan liability is below original principal after payment", loanNow.loans < 100000 && loanNow.loans > 0, loanNow.loans);
+const stockLot = { ...T(new Date(2026, 0, 1), 1000, "invest", "Test stock", "Stocks"), stockSymbol: "NSE:TEST", stockQuantity: 1, stockUnitPrice: 1000 };
+ok("future stock purchases are excluded from current holdings", stockPositions([{ ...stockLot, date: new Date(2026, 1, 1) }], { "NSE:TEST": { price: 1100, updatedAt: "2026-02-01" } }, new Date(2026, 0, 15)).length === 0);
+ok("same-day stock purchase has no misleading annualized XIRR", stockPositions([stockLot], { "NSE:TEST": { price: 1100, updatedAt: "2026-01-01" } }, new Date(2026, 0, 1))[0].xirr === undefined);
 
 // --- gamification for cards & portfolio
 const withCards: Book = { ...empty, cards: [{ name: "SBI Pulse", limit: 100000 }], txns: [{ ...T(new Date(2026, 10, 3), 20000, "expense", "Amazon", "Shopping", "Card"), account: "SBI Pulse" }] };
@@ -118,6 +155,7 @@ const excludedCard = { name: "X", rewards: { base: 1, exclude: "fuel", bonus: [{
 const excludedSpend = { ...T(new Date(2026, 10, 5), 1000, "expense", "BPCL", "Fuel", "Card"), account: "X" };
 ok("excluded spend earns zero even when a bonus keyword matches", rewardRate(excludedCard, "BPCL", "Fuel") === 0
   && rewardsEarned(excludedCard, [excludedSpend], new Date(2026, 10, 1), new Date(2026, 11, 1)) === 0);
+ok("whole-word reward exclusion does not treat Chemist as EMI", rewardRate({ name: "X", rewards: { base: 1, exclude: "emi" } }, "Chemist Warehouse", "Health") === 1);
 const cappedCard = { name: "Cap test", statementDay: 10, rewards: { base: 1, bonus: [{ match: "swiggy", rate: 10, capPerMonth: 1500 }] } };
 const cappedSpends = [
   { ...T(new Date(2026, 10, 12), 20000, "expense", "Swiggy", "Food", "Card"), account: "Cap test" },
@@ -128,6 +166,15 @@ ok("bonus cap resets in the next billing cycle", rewardsEarned(cappedCard, [
   ...cappedSpends,
   { ...T(new Date(2026, 11, 12), 20000, "expense", "Swiggy", "Food", "Card"), account: "Cap test" },
 ], new Date(2026, 10, 11), new Date(2027, 0, 11)) === 3000);
+const splitRewardCard = { name: "Split minimum", rewards: { base: 0, bonus: [{ match: "cafe", rate: 10 }], minTransaction: 1000 } };
+const splitRewardSpend = { ...T(new Date(2026, 10, 5), 600, "expense", "Cafe", "Food", "Card"), account: "Split minimum", split: [{ name: "Aman", amount: 400, settled: false }] };
+ok("reward minimum uses the full card charge, including friends' shares", rewardsEarned(splitRewardCard, [splitRewardSpend], new Date(2026, 10, 1), new Date(2026, 11, 1)) === 100);
+const shortCycle = { name: "Short cycle", statementDay: 28, rewards: { base: 0, bonus: [{ match: "shop", rate: 10, capPerMonth: 100 }] } };
+const shortCycleSpends = [
+  { ...T(new Date(2026, 9, 30), 2000, "expense", "Shop", "Shopping", "Card"), account: "Short cycle" },
+  { ...T(new Date(2026, 10, 30), 2000, "expense", "Shop", "Shopping", "Card"), account: "Short cycle" },
+];
+ok("day 29–31 billing cycles keep separate reward caps", rewardsEarned(shortCycle, shortCycleSpends, new Date(2026, 9, 1), new Date(2026, 11, 1)) === 200);
 const fallbackCard = { name: "Fallback", rewards: { base: 1, bonus: [{ match: "swiggy", rate: 10, capPerMonth: 1500, fallbackToBase: true }] } };
 ok("a source-authorized capped bonus can fall back to base", rewardsEarned(fallbackCard, cappedSpends.map((t) => ({ ...t, account: "Fallback" })), new Date(2026, 10, 1), new Date(2026, 11, 1)) === 1750);
 const spendLimited = { name: "Spend limit", rewards: { base: 0, bonus: [{ match: "shop", rate: 5 }], spendCapPerMonth: 10000 } };
@@ -156,7 +203,7 @@ ok("split settled: money back in bank, nothing owed", fl2.bankSpend - fl2.income
 // --- reminders calendar file
 const ics = remindersIcs([rent, { ...rent, id: "e1", name: "Car loan", kind: "EMI", tenure: 12, day: 31 }], [{ name: "SBI Pulse", dueDay: 3 }], now);
 ok("calendar: events, monthly repeat, last-day rule, EMI end, alarm", ics.includes("BEGIN:VCALENDAR") && (ics.match(/BEGIN:VEVENT/g) ?? []).length === 3
-  && ics.includes("BYMONTHDAY=5") && ics.includes("BYMONTHDAY=-1") && /UNTIL=\d{8}/.test(ics) && ics.includes("TRIGGER:-PT15H"));
+  && ics.includes("BYMONTHDAY=5") && ics.includes("BYMONTHDAY=31,-1;BYSETPOS=1") && /UNTIL=\d{8}/.test(ics) && ics.includes("TRIGGER:-PT15H"));
 
 // --- wrapped
 const wr = wrapped(demoBook(now).txns, 2026);

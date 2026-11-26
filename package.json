@@ -7,8 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx scripts/selftest.ts",
-    "check": "next typegen && tsc --noEmit && eslint && tsx scripts/selftest.ts",
+    "test": "node --import tsx scripts/selftest.ts",
+    "check": "next typegen && tsc --noEmit && eslint && node --import tsx scripts/selftest.ts",
     "db:push": "supabase db push --remote",
     "db:local": "supabase migration up --local",
     "deploy": "npm run check && npx vercel deploy --prod"

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Paisa Tracker · Review findings</title>
+  <style>
+    :root { color-scheme: light; --page:#f3f2ee; --card:#fff; --soft:#f1f0ec; --line:#e5e3dc; --ink:#111; --muted:#65645f; --quiet:#85837c; --lime:#b9f26a; --green:#138454; --orange:#b95b12; --blue:#326dc1; --red:#a63d46; --shadow:0 16px 40px -26px #15151540; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:24px 16px 64px; background:var(--page); color:var(--ink); font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { max-width:1040px; margin:auto; }
+    header { padding:34px 4px 22px; }
+    .eyebrow { color:var(--quiet); font-size:12px; font-weight:750; letter-spacing:.1em; text-transform:uppercase; }
+    h1 { max-width:850px; margin:12px 0; font-size:clamp(38px,7vw,68px); line-height:.98; letter-spacing:-.055em; }
+    h1 span { position:relative; z-index:0; white-space:nowrap; }
+    h1 span::before { position:absolute; content:""; inset:48% -5px 3%; z-index:-1; border-radius:6px; background:var(--lime); transform:rotate(-1deg); }
+    .lede { max-width:72ch; color:var(--muted); font-size:17px; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; }
+    .pill { border:1px solid var(--line); border-radius:999px; background:var(--card); padding:6px 12px; color:var(--muted); font-size:12px; }
+    section { margin-top:26px; }
+    h2 { margin:0 0 12px; font-size:clamp(24px,4vw,34px); line-height:1.1; letter-spacing:-.035em; }
+    h3 { margin:0 0 6px; font-size:17px; line-height:1.25; }
+    p { margin:7px 0; color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    article, .callout { min-width:0; border:1px solid var(--line); border-radius:20px; background:var(--card); padding:18px; box-shadow:var(--shadow); }
+    article.wide { grid-column:1/-1; }
+    .tag { display:inline-block; margin-bottom:9px; border-radius:999px; background:var(--soft); padding:3px 9px; color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .tag.done { background:#e4f5d1; color:#345b1b; }
+    .tag.defer { background:#fff0dd; color:#804006; }
+    .tag.risk { background:#fae7e7; color:#832e35; }
+    ul { margin:8px 0 0; padding-left:20px; color:var(--muted); }
+    li+li { margin-top:5px; }
+    .callout { border-left:5px solid var(--lime); background:#fbfff6; }
+    .callout strong { color:var(--ink); }
+    .small { font-size:12px; }
+    a { color:#235eaa; text-underline-offset:3px; }
+    code { border-radius:5px; background:var(--soft); padding:1px 5px; font-size:.9em; }
+    footer { margin-top:32px; border-top:1px solid var(--line); padding-top:14px; color:var(--quiet); font-size:12px; }
+    @media (max-width:680px) { .grid { grid-template-columns:1fr; } article.wide { grid-column:auto; } body { padding-inline:12px; } header { padding-top:20px; } }
+    @media print { body { padding:0; background:white; } article,.callout { box-shadow:none; break-inside:avoid; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Paisa Tracker · independent review follow-up · 26 November 2026</div>
+    <h1>What changed.<br><span>What I’d do differently.</span></h1>
+    <p class="lede">I checked the Claude review against the current source and applied the fixes that improve accounting or avoid clear import errors. This note separates completed code changes from decisions that need more product or data-provider clarity.</p>
+    <div class="meta">
+      <span class="pill">Local only · not pushed</span>
+      <span class="pill">Fake-data preview: HTTP 200</span>
+      <span class="pill">Self-test cases added · suite not run</span>
+      <span class="pill">Supabase migration pending</span>
+    </div>
+  </header>
+
+  <section aria-labelledby="changed">
+    <h2 id="changed">Changes made</h2>
+    <div class="grid">
+      <article class="wide">
+        <span class="tag done">Accounting correction</span>
+        <h3>Card purchases show in the month they happened</h3>
+        <p>The “Where it went” chart now includes credit-card purchases under their spending categories, along with investments. A later card-bill payment remains a transfer: it changes bank cash and card dues, but does not add a second expense.</p>
+        <p><strong>Why:</strong> adding both the original swipes and the bill payment to a spending pie would double-count the same purchase. This follows the month-of-purchase accounting you described.</p>
+      </article>
+      <article>
+        <span class="tag done">Statements</span>
+        <h3>Safer classification and refunds</h3>
+        <ul>
+          <li>Ordinary utility <code>BILLPAY</code> rows stay expenses; recognized card payment wording and known-card IB BILLPAY rows become transfers.</li>
+          <li>Bank POS rows use debit-card mode, so they do not create credit-card dues.</li>
+          <li>Refund credits are saved as expenses with refund semantics, reducing spending, budgets, and the relevant card balance.</li>
+          <li>Rows with unknown debit/credit direction need review and cannot pass statement reconciliation as balanced.</li>
+          <li>Duplicate matching checks merchant and type. Stable import IDs plus upsert make a retry after a partial batch safe.</li>
+        </ul>
+      </article>
+      <article>
+        <span class="tag done">Cards and rewards</span>
+        <h3>Caps and dues use the full card charge</h3>
+        <ul>
+          <li>Outstanding balances are calculated per card, so one card’s overpayment cannot hide another card’s due.</li>
+          <li>Refunds reduce the corresponding card exposure.</li>
+          <li>Split purchases use the full charged amount for reward limits and card exposure; spending still uses the user’s share.</li>
+          <li>Reward exclusions match complete words, and cap tracking keys each billing cycle by its actual start date.</li>
+        </ul>
+      </article>
+      <article>
+        <span class="tag done">Loans and dates</span>
+        <h3>Less misleading balances and reminders</h3>
+        <ul>
+          <li>When principal, annual rate, and term are known, the net-worth loan value uses estimated remaining principal rather than all future EMI payments.</li>
+          <li>FD/RD estimates accrue by elapsed days; maturity dates clamp to valid month-end dates.</li>
+          <li>Card due dates and monthly calendar reminders handle short months.</li>
+        </ul>
+      </article>
+      <article>
+        <span class="tag done">Stocks and interface</span>
+        <h3>Fixed refresh and interaction edge cases</h3>
+        <ul>
+          <li>Stock quote refresh dependencies are stable; saves are queued to prevent overlapping profile writes.</li>
+          <li>Future-dated stock purchases are excluded from current holdings. Same-day purchases do not show a meaningless annualized XIRR.</li>
+          <li>XIRR is labelled annualized.</li>
+          <li>Quick Add is scrollable on small screens, save errors release the busy state, dashboard transaction rows are buttons, and motion follows the system reduced-motion preference.</li>
+          <li>Common edit sheets and Quick Add have dialog semantics and keyboard focus containment.</li>
+        </ul>
+      </article>
+      <article class="wide">
+        <span class="tag done">Docs and database</span>
+        <h3>Updated project guidance and prepared a migration</h3>
+        <p>README, feature guide, and AGENTS now describe the corrected card-spend timing, refund behavior, import safety, annualized XIRR, and stock-data limits. A new Supabase migration adds refund storage, same-owner recurring links, and input-size constraints. The migration is not applied to the hosted database.</p>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="differently">
+    <h2 id="differently">What I would not change blindly</h2>
+    <div class="grid">
+      <article>
+        <span class="tag defer">Needs a workflow decision</span>
+        <h3>FD/RD maturity and payout</h3>
+        <p>I would not automatically remove a matured deposit or turn its full principal into income. It may have renewed, paid out, or remained in the account. The app still needs an explicit “record payout / renew” action that closes the investment and records the destination without counting principal as income. Until then, maturity values remain estimates and can be double-counted if the user logs proceeds but keeps the deposit asset.</p>
+      </article>
+      <article>
+        <span class="tag risk">Provider terms</span>
+        <h3>Stock history is not a Google feed</h3>
+        <p>The current chart uses TejHQ daily end-of-day data. Its <a href="https://tejhq.dev/data-terms">terms</a> describe free use as personal and require a paid plan for an app that shows data to other users. Exchange rights can apply separately under the <a href="https://nsearchives.nseindia.com/web/sites/default/files/inline-files/NSE_Data_Sharing%26Usage_Policy.pdf">NSE policy</a>. I would confirm permission before exposing this to other users; I would not subscribe to a paid tier without your approval. The data is not guaranteed or intraday.</p>
+      </article>
+      <article>
+        <span class="tag defer">Needs an accounting model</span>
+        <h3>Stock sales, taxes, and dividends</h3>
+        <p>Buy lots work today, but sell lots need a cost-basis rule (FIFO or another method), partial-sale support, and dividend treatment. I would not encode tax or sale logic as negative share quantities without agreeing on that model first.</p>
+      </article>
+      <article>
+        <span class="tag defer">Estimate, not a guarantee</span>
+        <h3>Bank-specific deposit terms</h3>
+        <p>FD/RD estimates use the entered rate and compounding schedule. Issuers can use product-specific day counts, payout timing, tax withholding, and rounding. The receipt’s actual maturity amount should take priority; an estimate must not be presented as a bank quote.</p>
+      </article>
+      <article>
+        <span class="tag defer">Legacy data limitation</span>
+        <h3>Loans without principal or rate</h3>
+        <p>For older loan records without enough inputs, the app still has to use remaining scheduled EMIs as a proxy. That includes future interest and is not the same as the principal owed. New or edited loans with principal and rate get a better estimate; incomplete records should be labelled approximate.</p>
+      </article>
+      <article>
+        <span class="tag defer">Terms need current checking</span>
+        <h3>Card reward presets</h3>
+        <p>Caps and minimums can be modelled, but merchant keywords cannot know the issuer’s MCC/MID/TID classification. Brochures and issuer rules change. Treat the best-card result as an estimate, and re-check each card’s current official terms before relying on it.</p>
+      </article>
+      <article class="wide">
+        <span class="tag defer">Not changed in this pass</span>
+        <h3>Hosted security settings and CSP</h3>
+        <p>The review did not inspect the live Supabase authentication configuration. I did not change hosted auth settings. I also did not add a restrictive Content Security Policy without first inventorying the app’s required script, font, image, and API origins; an incomplete policy can break sign-in or data loading. The separate input-size and ownership checks are prepared in the migration, pending local/hosted database review.</p>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="status">
+    <h2 id="status">Current status</h2>
+    <div class="callout">
+      <p><strong>Local changes are ready for your review.</strong> The fake-data preview is at <code>http://127.0.0.1:3000/preview</code>. The dev page returned HTTP 200. I added self-test cases but did not run the test suite.</p>
+      <p>The Supabase migration is still pending. Do not deploy the code to the signed-in app until that migration has been reviewed and applied. Nothing has been pushed to GitHub or deployed to Vercel.</p>
+    </div>
+  </section>
+
+  <footer>Review basis: Claude artifact findings checked against the local source. This document records implementation choices and open decisions; it is not a financial, tax, or legal opinion.</footer>
+</main>
+</body>
+</html>

@@ -1,29 +1,47 @@
-import { CATEGORIES, emisPaid, isCardSpend, monthsBetween, nextDue, paysFor, type Book, type Recurring, type Txn } from "./data";
+import { CATEGORIES, emisPaid, expenseAmount, isCardSpend, monthsBetween, nextDue, paysFor, type Book, type Recurring, type Txn } from "./data";
 
 const CATEGORY_NAMES: string[] = CATEGORIES.map((c) => c.name);
 
 /** Money in the bank: card spends leave it only when the bill is paid (a transfer). */
 export function bankFlow(txns: Txn[], before?: Date) {
   let income = 0, bankSpend = 0, cardSpend = 0, invested = 0, billsPaid = 0, lent = 0, settled = 0, owed = 0;
+  const cardBalance = new Map<string, number>();
   for (const t of txns) {
     if (before && t.date >= before) continue;
     // Split bills: you paid everyone's share (from the bank or on the card); theirs is owed to you until settled,
     // and comes back into the bank when they pay. The row's `amount` is only your share.
     const shares = (t.split ?? []).reduce((a, sh) => a + sh.amount, 0);
-    if (shares) {
-      if (isCardSpend(t)) cardSpend += shares; else lent += shares;
+    if (shares && !isCardSpend(t)) {
+      lent += shares;
       for (const sh of t.split!) { if (sh.settled) settled += sh.amount; else owed += sh.amount; }
     }
     if (t.type === "income") income += t.amount;
     else if (t.type === "invest") invested += t.amount;
-    else if (t.type === "transfer") billsPaid += t.amount;
-    else if (isCardSpend(t)) cardSpend += t.amount;
-    else bankSpend += t.amount;
+    else if (t.type === "transfer") {
+      billsPaid += t.amount;
+      if (t.account) cardBalance.set(t.account, (cardBalance.get(t.account) ?? 0) - t.amount);
+    } else if (isCardSpend(t)) {
+      const signed = expenseAmount(t) + (t.isRefund ? 0 : (t.split ?? []).reduce((n, share) => n + share.amount, 0));
+      cardSpend += signed;
+      const key = t.account ?? "__unassigned__";
+      cardBalance.set(key, (cardBalance.get(key) ?? 0) + signed);
+    } else bankSpend += expenseAmount(t);
   }
   return {
     income: income + settled, bankSpend: bankSpend + lent, cardSpend, invested, billsPaid, owedToYou: owed,
-    cardDues: Math.max(0, cardSpend - billsPaid),
+    cardDues: [...cardBalance.values()].reduce((sum, balance) => sum + Math.max(0, balance), 0),
   };
+}
+
+/** One card's outstanding exposure; overpayments on one card never cancel another card's due. */
+export function cardDue(txns: Txn[], name: string) {
+  let balance = 0;
+  for (const t of txns) {
+    if (t.account !== name) continue;
+    if (isCardSpend(t)) balance += expenseAmount(t) + (t.isRefund ? 0 : (t.split ?? []).reduce((n, share) => n + share.amount, 0));
+    else if (t.type === "transfer") balance -= t.amount;
+  }
+  return Math.max(0, balance);
 }
 import { total } from "./periods";
 import { ANNUAL_RETURN, CARD_UTILISATION_WARN, FIRE_MIN_DAYS, LOW_SPEND_DAY, MILESTONES, TREND_MONTHS } from "./config";
@@ -46,8 +64,22 @@ function investValueAt(txns: Txn[], at: Date) {
 }
 
 /** EMIs still to pay (amount × months left) at a date. */
-function loansAt(rec: Recurring[], at: Date) {
-  return rec.filter((r) => r.kind === "EMI" && r.tenure && r.start <= at).reduce((s, r) => s + (r.tenure! - emisPaid(r, at)) * r.amount, 0);
+function loanPrincipalAt(r: Recurring, paidCount: number) {
+  const principal = r.loanPrincipal;
+  if (!(principal && r.tenure && r.annualRate !== undefined)) return Math.max(0, r.tenure! - paidCount) * r.amount;
+  const k = Math.min(r.tenure, paidCount), rate = r.annualRate / 1200;
+  if (rate === 0) return Math.max(0, principal - r.amount * k);
+  const factor = (1 + rate) ** k;
+  return Math.max(0, principal * factor - r.amount * (factor - 1) / rate);
+}
+
+/** Outstanding principal for known-rate loans; future installment total when the rate is unknown. */
+function loansAt(rec: Recurring[], txns: Txn[], at: Date) {
+  return rec.filter((r) => r.kind === "EMI" && r.tenure && r.start <= at).reduce((sum, r) => {
+    const recorded = txns.filter((t) => t.type === "expense" && !t.isRefund && t.date < at && paysFor(t, r)).length;
+    const paid = recorded || (r.loanPrincipal ? 0 : emisPaid(r, at));
+    return sum + loanPrincipalAt(r, paid);
+  }, 0);
 }
 
 // 18 months: for the demo this starts after the car loan, so no fake cliff in the chart.
@@ -60,7 +92,7 @@ export function netWorth({ txns, recurring, openingBalance }: Book, now: Date, m
     const isNow = i === months - 1;
     // Today: linked funds at live NAV + everything else at the assumed return.
     const invest = isNow && mfNow ? investValueAt(txns, end) - growth(mfNow.invested, txns, end) + mfNow.value : investValueAt(txns, end);
-    const loans = loansAt(recurring, end), dues = f.cardDues;
+    const loans = loansAt(recurring, txns, end), dues = f.cardDues;
     const label = i === months - 1 ? "Now" : new Date(end.getTime() - DAY).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
     return { label, cash, invest, loans, dues, owed: f.owedToYou, value: cash + invest - loans - dues + f.owedToYou };
   });
@@ -112,7 +144,7 @@ export function streaks(txns: Txn[], now: Date) {
     else if (k > 0) break;
   }
   const daily = new Map<string, number>();
-  for (const t of txns) if (isDiscretionary(t)) daily.set(ymd(t.date), (daily.get(ymd(t.date)) ?? 0) + t.amount);
+  for (const t of txns) if (isDiscretionary(t)) daily.set(ymd(t.date), (daily.get(ymd(t.date)) ?? 0) + expenseAmount(t));
   // Habits only count from the day of the first entry: an empty account has "no spending" but earned nothing.
   const since = trackingSince(txns.filter((t) => t.type === "expense"));
   const tracked = (d: Date) => !!since && d >= since;
@@ -137,9 +169,8 @@ export type Badge = { key: string; name: string; got: boolean; hint: string };
 /** Each card's dues vs its limit (only cards with a limit set). */
 export function cardUtilisation({ txns, cards = [] }: Book) {
   return cards.filter((c) => c.limit).map((c) => {
-    const spent = txns.reduce((a, t) => (t.type === "expense" && t.account === c.name ? a + t.amount : a), 0);
-    const paid = txns.reduce((a, t) => (t.type === "transfer" && t.account === c.name ? a + t.amount : a), 0);
-    return { name: c.name, due: Math.max(0, spent - paid), limit: c.limit!, pct: Math.max(0, spent - paid) / c.limit! };
+    const due = cardDue(txns, c.name);
+    return { name: c.name, due, limit: c.limit!, pct: due / c.limit! };
   });
 }
 
@@ -231,8 +262,8 @@ export function challenges(txns: Txn[], now: Date, s: ReturnType<typeof streaks>
   const daysTracked = s.since ? Math.floor((now.getTime() - s.since.getTime()) / DAY) : 0;
   const sinceDelivery = Math.min(delivery ? Math.floor((now.getTime() - delivery.date.getTime()) / DAY) : Infinity, daysTracked);
   const m0 = monthStart(now, 0);
-  const sumMerch = (names: string[]) => txns.reduce((a, t) => (t.date >= m0 && names.some((n) => t.merchant.toLowerCase().includes(n.toLowerCase())) ? a + t.amount : a), 0);
-  const shopping = txns.reduce((a, t) => (t.date >= m0 && t.category === "Shopping" ? a + t.amount : a), 0);
+  const sumMerch = (names: string[]) => txns.reduce((a, t) => (t.type === "expense" && t.date >= m0 && names.some((n) => t.merchant.toLowerCase().includes(n.toLowerCase())) ? a + expenseAmount(t) : a), 0);
+  const shopping = txns.reduce((a, t) => (t.type === "expense" && t.date >= m0 && t.category === "Shopping" ? a + expenseAmount(t) : a), 0);
   const coffee = sumMerch(["Starbucks", "Chai Point"]);
   return [
     { name: "No food delivery for 7 days", kind: "streak", value: Math.min(sinceDelivery, 7), goal: 7, unit: "days" },
@@ -252,7 +283,7 @@ export function budgetStatus(txns: Txn[], budgets: Record<string, number>, now: 
   const m0 = new Date(now.getFullYear(), now.getMonth(), 1);
   const dayShare = now.getDate() / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   return Object.entries(budgets).filter(([, b]) => b > 0).map(([cat, budget]) => {
-    const spent = txns.reduce((a, t) => (t.type === "expense" && t.date >= m0 && t.date <= now && (cat === "Other" ? !CATEGORY_NAMES.includes(t.category) : t.category === cat) ? a + t.amount : a), 0);
+    const spent = txns.reduce((a, t) => (t.type === "expense" && t.date >= m0 && t.date <= now && (cat === "Other" ? !CATEGORY_NAMES.includes(t.category) : t.category === cat) ? a + expenseAmount(t) : a), 0);
     const pct = spent / budget;
     return { cat, budget, spent, pct, left: budget - spent, onPace: pct <= dayShare + 0.05, level: pct >= 1 ? "over" as const : pct >= 0.8 ? "warn" as const : "ok" as const };
   }).sort((a, b) => b.pct - a.pct);
@@ -268,7 +299,7 @@ export function reframes({ txns, recurring }: Book, now: Date) {
   const inr = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
   const out: string[] = [];
   if (investedYear && rent) out.push(`${inr(investedYear)} invested this year = ${(investedYear / rent).toFixed(1)} months of rent, working for you`);
-  if (grown > 1000) out.push(`Your investments earned about ${inr(grown)}, roughly ${Math.round(grown / 649 / 12)} years of Netflix`);
+  if (grown > 1000) out.push(`At the 12% planning estimate, your logged investments may have grown by about ${inr(grown)} — roughly ${Math.round(grown / 649 / 12)} years of Netflix`);
   if (savedMonth > 0 && perDay > 0) out.push(`This month's savings pay for ${Math.round(savedMonth / perDay)} days of your life`);
   if (!out.length) out.push("Every rupee you log makes this dashboard smarter");
   return out;
@@ -336,7 +367,7 @@ export function makeQuestions(txns: Txn[], now: Date, n = 5): Question[] {
   for (let tries = 0; out.length < n && tries < 200; tries++) {
     const r = ranges[Math.floor(Math.random() * ranges.length)];
     const [g1, g2] = [...groups].sort(() => Math.random() - 0.5);
-    const sum = (g: (typeof groups)[number]) => txns.reduce((s, t) => (t.type === "expense" && t.date >= r.a && t.date < r.b && g.match(t) ? s + t.amount : s), 0);
+    const sum = (g: (typeof groups)[number]) => txns.reduce((s, t) => (t.type === "expense" && t.date >= r.a && t.date < r.b && g.match(t) ? s + expenseAmount(t) : s), 0);
     const v1 = sum(g1), v2 = sum(g2);
     // A group inside its own category (Pizza vs Food) is a trick question; skip it and repeats.
     if (!v1 || !v2 || v1 === v2 || g1.within === g2.name || g2.within === g1.name) continue;

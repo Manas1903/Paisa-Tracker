@@ -1,7 +1,7 @@
 "use client";
 
 import type { Session } from "@supabase/supabase-js";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { Loader2, Sparkles, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { demoBook, type Book } from "@/lib/data";
@@ -18,7 +18,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
   if (session === undefined) return <Splash />;
-  return session ? <Account key={session.user.id} session={session} /> : <AuthScreen />;
+  return <MotionConfig reducedMotion="user">{session ? <Account key={session.user.id} session={session} /> : <AuthScreen />}</MotionConfig>;
 }
 
 function Splash({ text = "Loading" }: { text?: string }) {

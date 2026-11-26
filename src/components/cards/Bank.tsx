@@ -10,6 +10,8 @@ import { CardChip } from "@/components/ui/CardChip";
 import { CARD_UTILISATION_WARN } from "@/lib/config";
 import { daysBetween } from "@/lib/dates";
 import { billingCycle, rewardsEarned, rewardsFor } from "@/lib/cards";
+import { cardDue } from "@/lib/insights";
+import { chargedAmount, expenseAmount, nextCardDue } from "@/lib/data";
 
 /** Bank now = starting + income − bank/UPI/cash spends − investments − card bills paid. */
 export function BankCard({ i, openingBalance, txns, onEdit }: { i: number; openingBalance: number; txns: Txn[]; onEdit: () => void }) {
@@ -44,20 +46,17 @@ export function CardDuesCard({ i, cards, txns, now, onManage, onPay }: {
   i: number; cards: CreditCard[]; txns: Txn[]; now: Date; onManage: () => void; onPay: (card: string, due: number) => void;
 }) {
   const names = [...new Set([...cards.map((c) => c.name), ...txns.filter((t) => t.account).map((t) => t.account!)])];
-  const unassigned = txns.filter((t) => t.type === "expense" && t.mode === "Card" && !t.account).reduce((a, t) => a + t.amount, 0);
+  const unassigned = txns.filter((t) => t.type === "expense" && t.mode === "Card" && !t.account).reduce((a, t) => a + expenseAmount(t), 0);
   const rows = names.map((name) => {
     const c = cards.find((x) => x.name === name);
-    const spent = txns.reduce((a, t) => (t.type === "expense" && t.account === name ? a + t.amount : a), 0);
-    const paid = txns.reduce((a, t) => (t.type === "transfer" && t.account === name ? a + t.amount : a), 0);
-    const due = Math.max(0, spent - paid);
+    const due = cardDue(txns, name);
     let dueIn: number | null = null;
     if (c?.dueDay) {
-      const d = new Date(now.getFullYear(), now.getMonth(), c.dueDay);
-      if (d < new Date(now.getFullYear(), now.getMonth(), now.getDate())) d.setMonth(d.getMonth() + 1);
+      const d = nextCardDue(c.dueDay, now);
       dueIn = daysBetween(now, d);
     }
     const cycle = c ? billingCycle(c, now) : null;
-    const cycleSpend = cycle ? txns.reduce((a, t) => (t.type === "expense" && t.account === name && t.date >= cycle.start && t.date <= now ? a + t.amount : a), 0) : null;
+    const cycleSpend = cycle ? txns.reduce((a, t) => (t.type === "expense" && !t.isRefund && t.account === name && t.date >= cycle.start && t.date <= now ? a + chargedAmount(t) : a), 0) : null;
     const m0 = new Date(now.getFullYear(), now.getMonth(), 1);
     const rewards = c && rewardsFor(c) ? rewardsEarned(c, txns, m0, new Date(now.getTime() + 1)) : null;
     return { name, due, limit: c?.limit, dueIn, cycle, cycleSpend, statementIn: cycle ? daysBetween(now, cycle.end) : null, rewards };

@@ -1,4 +1,4 @@
-import { monthsBetween, paysFor, type Recurring, type Txn } from "./data";
+import { maturityOf, paysFor, type Recurring, type Txn } from "./data";
 import { NAV_TTL_MS, PORTFOLIO_MONTHS, STORAGE } from "./config";
 import { DAY, ymd } from "./dates";
 
@@ -33,10 +33,11 @@ export type Holding = {
 export type FixedIncomeHolding = { rec?: Recurring; name: string; kind: "FD" | "RD"; annualRate: number; tenure: number; invested: number; value: number; maturity: Date; institution?: string; product?: string; compoundingFrequency?: Recurring["compoundingFrequency"]; payoutFrequency?: Recurring["payoutFrequency"]; maturityAmount?: number; maturityInstruction?: Recurring["maturityInstruction"] };
 
 const periodsPerYear = (frequency: Recurring["compoundingFrequency"] = "quarterly") => ({ monthly: 12, quarterly: 4, "half-yearly": 2, yearly: 1 })[frequency];
-const futureValue = (principal: number, annualRate: number, months: number, frequency: Recurring["compoundingFrequency"] = "quarterly") => {
+const futureValue = (principal: number, annualRate: number, days: number, frequency: Recurring["compoundingFrequency"] = "quarterly") => {
   const periods = periodsPerYear(frequency);
-  return principal * (1 + annualRate / (100 * periods)) ** (months * periods / 12);
+  return principal * (1 + annualRate / (100 * periods)) ** (Math.max(0, days) * periods / 365.2425);
 };
+const daysBetween = (a: Date, b: Date) => Math.max(0, (new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime() - new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime()) / 86_400_000);
 
 /** Estimate current FD/RD value using each recorded deposit and its stored annual rate. */
 export function fixedIncomeHoldings(recurring: Recurring[], txns: Txn[], now: Date): FixedIncomeHolding[] {
@@ -44,10 +45,10 @@ export function fixedIncomeHoldings(recurring: Recurring[], txns: Txn[], now: Da
     .map((rec) => {
       const deposits = txns.filter((t) => t.type === "invest" && paysFor(t, rec) && t.date <= now);
       const invested = deposits.reduce((sum, t) => sum + t.amount, 0);
-      const maturity = rec.maturityDate ?? new Date(rec.start.getFullYear(), rec.start.getMonth() + rec.tenure! - (rec.kind === "RD" ? 1 : 0), rec.day);
+      const maturity = rec.maturityDate ?? maturityOf(rec.start, rec.tenure!, rec.day);
       const value = deposits.reduce((sum, t) => {
-        const age = Math.max(0, Math.min(rec.tenure!, monthsBetween(t.date, now)));
-        return sum + (rec.payoutFrequency && rec.payoutFrequency !== "maturity" ? t.amount : futureValue(t.amount, rec.annualRate!, age, rec.compoundingFrequency));
+        const accrualEnd = now < maturity ? now : maturity;
+        return sum + (rec.payoutFrequency && rec.payoutFrequency !== "maturity" ? t.amount : futureValue(t.amount, rec.annualRate!, daysBetween(t.date, accrualEnd), rec.compoundingFrequency));
       }, 0);
       const matured = now >= maturity;
       return { rec, name: rec.name, kind: rec.kind as "FD" | "RD", annualRate: rec.annualRate!, tenure: rec.tenure!, invested,
@@ -56,9 +57,9 @@ export function fixedIncomeHoldings(recurring: Recurring[], txns: Txn[], now: Da
     }).filter((h) => h.invested > 0);
   const oneTime = txns.filter((t) => t.type === "invest" && (t.category === "FD" || t.category === "RD") && t.annualRate !== undefined && t.tenureMonths && !t.recurringId && t.date <= now)
     .map((t) => {
-      const age = Math.max(0, Math.min(t.tenureMonths!, monthsBetween(t.date, now)));
-      const maturity = t.maturityDate ?? new Date(t.date.getFullYear(), t.date.getMonth() + t.tenureMonths! - (t.category === "RD" ? 1 : 0), t.date.getDate());
-      const value = t.payoutFrequency && t.payoutFrequency !== "maturity" ? t.amount : futureValue(t.amount, t.annualRate!, age, t.compoundingFrequency);
+      const maturity = t.maturityDate ?? maturityOf(t.date, t.tenureMonths!);
+      const accrualEnd = now < maturity ? now : maturity;
+      const value = t.payoutFrequency && t.payoutFrequency !== "maturity" ? t.amount : futureValue(t.amount, t.annualRate!, daysBetween(t.date, accrualEnd), t.compoundingFrequency);
       const matured = now >= maturity;
       return { name: t.merchant || t.category, kind: t.category as "FD" | "RD", annualRate: t.annualRate!, tenure: t.tenureMonths!, invested: t.amount,
         maturity, institution: t.institution, product: t.product, compoundingFrequency: t.compoundingFrequency, payoutFrequency: t.payoutFrequency, maturityAmount: t.maturityAmount,

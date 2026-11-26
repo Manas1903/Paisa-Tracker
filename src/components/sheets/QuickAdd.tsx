@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Loader2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CATEGORIES, type CreditCard, type Mode, type Txn, type TxnType } from "@/lib/data";
 import { DeleteButton } from "@/components/sheets/Forms";
 import { CardPicker } from "@/components/ui/CardChip";
@@ -18,7 +18,7 @@ const CATS: Record<TxnType, string[]> = {
   transfer: ["Card bill"],
 };
 const TYPE_LABEL: Record<TxnType, string> = { expense: "Expense", income: "Income", invest: "Invest", transfer: "Card bill" };
-const MODES: Mode[] = ["UPI", "Card", "Cash", "NetBanking", "AutoPay"];
+const MODES: Mode[] = ["UPI", "Card", "DebitCard", "Cash", "NetBanking", "AutoPay"];
 
 const field = "w-full min-w-0 rounded-2xl border border-line bg-soft px-3 py-2.5 text-base outline-none transition focus:border-ink focus:bg-card";
 
@@ -52,13 +52,17 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
   const [stockUnitPrice, setStockUnitPrice] = useState(editing?.stockUnitPrice == null ? "" : String(editing.stockUnitPrice));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const previous = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    return () => { window.removeEventListener("keydown", onKey); previous?.focus(); };
+  }, [open]);
   const [extra, setExtra] = useState<Record<string, string[]>>(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE.customOptions) ?? "{}"); } catch { return {}; }
   });
@@ -90,15 +94,16 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
     const clock = editing?.date ?? new Date(); // keep the original time of day when editing
     const when = new Date(y, m - 1, d, clock.getHours(), clock.getMinutes(), clock.getSeconds());
     if (isNaN(when.getTime())) return setErr("Pick a valid date");
-    setBusy(true);
     const onCard = type === "transfer" || (type === "expense" && mode === "Card");
+    if (onCard && !account) return setErr("Pick or add the card");
     const names = splitOn && type === "expense" ? friends.split(",").map((f) => f.trim()).filter(Boolean) : [];
     const share = names.length ? Math.round((n / (names.length + 1)) * 100) / 100 : 0;
     const settledBefore = new Map((editing?.split ?? []).map((sh) => [sh.name, sh.settled]));
     const split = names.map((name) => ({ name, amount: share, settled: settledBefore.get(name) ?? false }));
     const mine = Math.round((n - share * names.length) * 100) / 100;
-    if (onCard && !account) return setErr("Pick or add the card");
-    const ok = await onAdd(type === "transfer"
+    setBusy(true);
+    let ok = false;
+    try { ok = await onAdd(type === "transfer"
       ? { id: editing?.id ?? crypto.randomUUID(), date: when, amount: n, type, category: "Card bill", merchant: merchant.trim() || `${account} bill`, mode: "NetBanking", account }
       : { id: editing?.id ?? crypto.randomUUID(), date: when, amount: names.length ? mine : n, type, category, merchant: merchant.trim() || category, mode,
           recurringId: editing?.recurringId, account: onCard ? account : undefined, split: names.length ? split : undefined,
@@ -112,7 +117,8 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
           maturityDate: type === "invest" && (category === "FD" || category === "RD") && maturityDate ? new Date(`${maturityDate}T00:00:00`) : undefined,
           maturityInstruction: type === "invest" && (category === "FD" || category === "RD") ? maturityInstruction : undefined,
           stockSymbol: isStockLot ? symbol : undefined, stockQuantity: isStockLot ? qty : undefined, stockUnitPrice: isStockLot ? price : undefined });
-    setBusy(false);
+    } catch (error) { setErr(error instanceof Error ? error.message : "Could not save. Please retry."); }
+    finally { setBusy(false); }
     if (!ok) return; // keep what was typed so it can be retried
     setAmount("");
     setMerchant("");
@@ -124,14 +130,20 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
   return (
     <AnimatePresence>
       {open && (
-        <motion.div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center"
+        <motion.div role="dialog" aria-modal="true" aria-label={editing ? "Edit transaction" : "Add transaction"} className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, pointerEvents: "none" }} onClick={onClose}>
-          <motion.form onSubmit={submit} onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md space-y-4 rounded-t-[32px] border border-line bg-card p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-[32px] sm:pb-6"
+          <motion.form ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="quick-add-title" tabIndex={-1} onKeyDown={(e) => {
+            if (e.key !== "Tab" || !dialogRef.current) return;
+            const items = [...dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')];
+            if (!items.length) { e.preventDefault(); return; }
+            if (e.shiftKey && document.activeElement === items[0]) { e.preventDefault(); items[items.length - 1].focus(); }
+            else if (!e.shiftKey && document.activeElement === items[items.length - 1]) { e.preventDefault(); items[0].focus(); }
+          }} onSubmit={submit} onClick={(e) => e.stopPropagation()}
+            className="max-h-[92dvh] w-full max-w-md space-y-4 overflow-y-auto rounded-t-[32px] border border-line bg-card p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-[32px] sm:pb-6"
             initial={{ y: 80, opacity: 0, scale: 0.96 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: 80, opacity: 0 }}
             transition={{ type: "spring", stiffness: 320, damping: 30 }}>
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black tracking-tight">{editing?.id ? "Edit entry" : "Add money stuff"}</h2>
+              <h2 id="quick-add-title" className="text-2xl font-black tracking-tight">{editing?.id ? "Edit entry" : "Add money stuff"}</h2>
               <button type="button" onClick={onClose} className="rounded-full p-1.5 text-ink3 hover:bg-soft" aria-label="Close"><X size={18} /></button>
             </div>
 

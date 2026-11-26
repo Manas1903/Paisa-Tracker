@@ -43,7 +43,7 @@ export function WrappedSheet({ open, onClose, txns, year }: { open: boolean; onC
   return (
     <AnimatePresence>
       {open && (
-        <motion.div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-0 backdrop-blur-sm sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, pointerEvents: "none" }}>
+        <motion.div role="dialog" aria-modal="true" aria-label={`${year} Money Wrapped`} className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-0 backdrop-blur-sm sm:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, pointerEvents: "none" }}>
           <motion.div className="relative flex h-full w-full max-w-md flex-col overflow-hidden text-white sm:h-[760px] sm:rounded-[32px]"
             animate={{ backgroundColor: BG[i % BG.length] }} transition={{ duration: 0.5 }}>
             <div className="flex gap-1 p-4 pt-[calc(1rem+env(safe-area-inset-top))]">
