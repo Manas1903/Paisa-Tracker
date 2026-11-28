@@ -1,0 +1,1 @@
+My money app now splits bills with friends: a ₹2,000 dinner only counts ₹1,000 as my spending, and the friends leaderboard ranks who saves best, not who earns most. Free, installs on your iPhone: paisa-tracker-app.vercel.app
