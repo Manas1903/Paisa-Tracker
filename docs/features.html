@@ -108,21 +108,99 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--purple); outlin
 <div class="wrap">
   <header class="hero">
     <div>
-      <div class="eyebrow"><span>Feature guide · 25 November 2026</span><span class="pill"><b>₹</b>Paisa Tracker</span></div>
+      <div class="eyebrow"><span>Feature guide · 28 November 2026</span><span class="pill"><b>₹</b>Paisa Tracker</span></div>
       <h1>Everything your money app <span class="mark">can do.</span></h1>
-      <p class="lede">What was added today comes first, most useful at the top. Below that is everything built before: the dashboard, the motivation features, the mutual fund tracker and the iPhone app.</p>
+      <p class="lede">Newest first: friends, shared splits and friend games (28 Nov), then cards, stocks, FDs/RDs, loans and imports (25–26 Nov), then everything built before: the dashboard, the motivation features, the mutual fund tracker and the iPhone app.</p>
       <div class="hero-meta">
         <span class="chip">Live: <strong><a href="https://paisa-tracker-app.vercel.app" target="_blank" rel="noopener">paisa-tracker-app.vercel.app</a></strong></span>
         <span class="chip">Cost <strong>₹0</strong></span>
-        <span class="chip">Data <strong>private per login</strong></span>
+        <span class="chip">Data <strong>private per login</strong> · friends see only % you share</span>
       </div>
     </div>
     <div class="shapes" aria-hidden="true"><div class="s s1"></div><div class="s s2"></div><div class="s s3"></div><div class="s s4"></div><div class="s s5"></div></div>
   </header>
 
+  <!-- ===================== FRIENDS ===================== -->
+  <section class="sec" aria-labelledby="friends">
+    <div class="sec-head"><h2 id="friends">Friends</h2><span class="tag">28 Nov · new</span><p>Split money, compare fairly, play together</p></div>
+    <div class="grid">
+
+      <article class="card wide">
+        <div class="card-top"><span class="tile t-orange">👥</span><div><div class="rank">1 · split bills</div><h3>Splitwise-style splits, counted the right way</h3></div></div>
+        <p>Add an expense, tick <b>Split with friends</b>, pick friends (or <b>＋ Invite new</b>), then who paid. With two people: <b>You paid · they owe all</b>, <b>You paid · 50-50</b>, <b>They paid · you owe all</b>, <b>They paid · 50-50</b> or <b>Custom</b>. With three or more: split equally or custom amounts that must add up to the total.</p>
+        <div class="flow">₹2,000 dinner on your card, 50-50 with Riya
+2 Nov   swipe            → <u>your spending ₹1,000</u> · Riya owes ₹1,000 · card due ₹2,000 · bank unchanged
+6 Nov   Riya pays ₹1,000 → bank +₹1,000 · Riya owes ₹0
+5 Dec   pay card bill    → bank −₹2,000 · card due ₹0 · <em>not spending</em></div>
+        <ul>
+          <li>Only <b>your share</b> is your spending, from the purchase day. A friend's share is money owed to you, never your spending.</li>
+          <li>Paid by UPI: the bank drops by the full bill and comes back as friends pay. Paid by card: the card due holds the full bill; the bank moves only when you pay the bill.</li>
+          <li>Friend paid: your share is your spending, and "You owe Aman ₹1,200" lowers your net worth until you settle.</li>
+          <li>Anyone in the split can edit, delete or settle it. Your payment method (UPI, which card) stays private to you.</li>
+          <li>One total per friend, both ways. <b>Settle all</b> or <b>Part</b> (an amount; oldest splits clear first).</li>
+          <li>Friends who aren't on the app can still be split with by name (you paid only).</li>
+        </ul>
+        <div class="where">Find it <span>＋ → Add expense → Split with friends</span><span>Friends card</span><span>Tap a split in Transactions</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-lime">🔗</span><div><div class="rank">2 · invite</div><h3>Invite by link</h3></div></div>
+        <p>Make a link and send it on WhatsApp (or share / copy). Opening it makes you friends straight away, after sign-up if they're new. Each link works once and lasts 7 days. Nobody can search for you by email or phone.</p>
+        <div class="where">Find it <span>＋ → Invite a friend</span><span>👤 → Friends</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-blue">🔔</span><div><div class="rank">3 · updates</div><h3>While you were away</h3></div></div>
+        <p>When a friend adds, edits, settles or deletes a split you're in, you see it the next time you open the app. A settle you didn't expect? One tap undoes it. Friends' good news (savings rate up, a new challenge) shows here too.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-purple">🔒</span><div><div class="rank">4 · privacy</div><h3>Share my stats: one switch</h3></div></div>
+        <p>Each friend has a <b>Share my stats</b> switch, off until you turn it on. It shares <b>percentages and scores only, never rupee amounts</b>: savings rate, invest rate, spending share per category, fair score, grade, level, streak, goal progress. Removing a friend stops sharing at once; open splits stay.</p>
+        <div class="where">Find it <span>👤 → Friends</span></div>
+      </article>
+
+      <article class="card wide">
+        <div class="card-top"><span class="tile t-yellow">🏆</span><div><div class="rank">5 · fair leaderboard</div><h3>Win by saving well, not by earning more</h3></div></div>
+        <p>A monthly <b>fair score</b> out of 100, built only from ratios and habits. Someone earning ₹30K who saves 30% beats someone earning ₹3L who saves 10%.</p>
+        <ul>
+          <li>Savings rate <b>30</b> (25%+ = full) · Invest rate <b>25</b> (20%+ = full) · Stayed within budgets <b>20</b> · Improvement vs your last 3 months <b>15</b> · Low/no-spend days <b>10</b></li>
+          <li>No budgets set? The other parts scale up, so it neither helps nor hurts.</li>
+          <li>Resets on the 1st. Friends whose stats aren't from this month show "not updated" instead of an old score.</li>
+        </ul>
+        <div class="where">Find it <span>Friends leaderboard card</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-pink">⚔</span><div><div class="rank">6 · challenges</div><h3>Friend challenges</h3></div></div>
+        <p>Challenge a friend to a <b>no-spend weekend</b>, a <b>low-spend week</b> (each day under your own usual spend) or a <b>savings-rate target</b> this month. The app judges from both people's shared stats; nobody self-reports. Win: +300 XP. Tie: +150 each. No money bets. They can accept or decline.</p>
+        <div class="where">Find it <span>Leaderboard → Challenge</span></div>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-green">🎯</span><div><div class="rank">7 · goal buddy</div><h3>Goal buddy</h3></div></div>
+        <p>Pick one goal and one friend. They see only its progress, like "Goa trip 64%". Buddies' goals shared with you show on the leaderboard.</p>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-ink">🎮</span><div><div class="rank">8 · quiz &amp; Wrapped</div><h3>Friends in the games</h3></div></div>
+        <ul>
+          <li>Quiz: "Which got a bigger share of Riya's spending: Food or Travel?" (from shared %, friends who share only)</li>
+          <li>Money Wrapped: a slide comparing your fair score with your friends'</li>
+          <li>Challenges won add to your XP and level</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="card-top"><span class="tile t-lime">✓</span><div><div class="rank">fix</div><h3>Card splits no longer double-count</h3></div></div>
+        <p>A friend's share of a bill paid by card used to leave your bank balance twice (at the swipe and again in the bill payment). It now leaves once, inside the bill.</p>
+      </article>
+    </div>
+  </section>
+
   <!-- ===================== TODAY ===================== -->
   <section class="sec" aria-labelledby="today">
-    <div class="sec-head"><h2 id="today">Added today</h2><span class="tag">25 Nov · most useful first</span></div>
+    <div class="sec-head"><h2 id="today">Cards, investing &amp; imports</h2><span class="tag">25–26 Nov · most useful first</span></div>
     <div class="grid">
 
       <article class="card wide">
@@ -202,7 +280,7 @@ Nov  pay the bill ₹30,000      → <em>not spending</em> · bank −₹30,000 
 
       <article class="card">
         <div class="card-top"><span class="tile t-ink">＋</span><div><div class="rank">4 · one button</div><h3>The ＋ menu does everything</h3></div></div>
-        <p>The big black button opens a menu: add expense or income, import a statement, pay a card bill, add an EMI/SIP/bill, cards &amp; settings, set budgets, customize layout, and Money Wrapped.</p>
+        <p>The big black button opens a menu: add expense or income (and split it), invite a friend, import a statement, pay a card bill, add an EMI/SIP/bill, cards &amp; settings, set budgets, customize layout, and Money Wrapped.</p>
         <div class="where">Find it <span>bottom-right ＋</span></div>
       </article>
 
@@ -231,8 +309,8 @@ Nov  pay the bill ₹30,000      → <em>not spending</em> · bank −₹30,000 
 
       <article class="card">
         <div class="card-top"><span class="tile t-orange">👥</span><div><div class="rank">8 · split</div><h3>Split bills with friends</h3></div></div>
-        <p>Enter the full bill and names, and it splits equally. Only your share counts as your spending. Friends' shares show as owed to you until you tap <b>Settled</b>, and they count toward your net worth.</p>
-        <div class="where">Find it <span>Add expense → Split with friends</span><span>Friends owe you card</span></div>
+        <p>Only your share counts as your spending. Friends' shares show as owed to you until settled, and count toward your net worth. Now Splitwise-style with friends on the app: see <a href="#friends">Friends</a> above.</p>
+        <div class="where">Find it <span>Add expense → Split with friends</span><span>Friends card</span></div>
       </article>
 
       <article class="card">
@@ -351,7 +429,7 @@ Nov  pay the bill ₹30,000      → <em>not spending</em> · bank −₹30,000 
       </article>
       <article class="card">
         <div class="card-top"><span class="tile t-orange">🔒</span><h3>Logins &amp; privacy</h3></div>
-        <p>Email and password login. Every row is private to its owner, enforced by the database. Start fresh with your bank balance, or explore with demo data.</p>
+        <p>Email and password login. Every row is private to its owner, enforced by the database. The only exceptions: a shared split is visible to the people in it, and your shared stats (percentages only) to friends you turn sharing on for. Start fresh with your bank balance, or explore with demo data.</p>
       </article>
       <article class="card">
         <div class="card-top"><span class="tile t-lime">📱</span><h3>iPhone app, free</h3></div>
@@ -369,11 +447,11 @@ Nov  pay the bill ₹30,000      → <em>not spending</em> · bank −₹30,000 
     <div class="sec-head"><h2 id="map">Where things live</h2></div>
     <div class="map">
       <div class="card"><h3><span class="tile t-ink" style="width:32px;height:32px;border-radius:10px;font-size:14px">＋</span>Big ＋ button</h3>
-        <ul><li>Add expense / income, including Flexipay</li><li>Invest: stocks, FD/RD and funds</li><li>Import statement</li><li>Pay card bill</li><li>Add EMI / SIP / FD / RD / bill</li><li>Cards &amp; settings</li><li>Set budgets</li><li>Customize layout</li><li>Money Wrapped</li></ul></div>
+        <ul><li>Add expense / income, including Flexipay · split with friends</li><li>Invite a friend</li><li>Invest: stocks, FD/RD and funds</li><li>Import statement</li><li>Pay card bill</li><li>Add EMI / SIP / FD / RD / bill</li><li>Cards &amp; settings</li><li>Set budgets</li><li>Customize layout</li><li>Money Wrapped</li></ul></div>
       <div class="card"><h3><span class="tile t-purple" style="width:32px;height:32px;border-radius:50%;font-size:14px">P</span>Your initial (top right)</h3>
-        <ul><li>Customize layout</li><li>Cards &amp; settings</li><li>Edit bank balance</li><li>Calendar reminders</li><li>Export to Excel</li><li>Print / save as PDF</li><li>Sign out · delete all data</li></ul></div>
+        <ul><li>Customize layout</li><li>Cards &amp; settings</li><li>Edit bank balance</li><li>Calendar reminders</li><li>Export to Excel</li><li>Print / save as PDF</li><li>Money Wrapped</li><li>Friends: share my stats, remove</li><li>Sign out · delete all data</li></ul></div>
       <div class="card"><h3><span class="tile t-lime" style="width:32px;height:32px;border-radius:10px;font-size:14px">☝</span>Tap to edit</h3>
-        <ul><li>Any transaction</li><li>EMIs &amp; "Everything else" list</li><li>Subscriptions</li><li>Goal rings</li><li>Card dues → Pay bill</li><li>Friends → Settled</li></ul></div>
+        <ul><li>Any transaction</li><li>EMIs &amp; "Everything else" list</li><li>Subscriptions</li><li>Goal rings</li><li>Card dues → Pay bill</li><li>A shared split → edit, settle, delete</li><li>Friends → Settle all / Part</li><li>Leaderboard → Challenge, goal buddy</li></ul></div>
     </div>
   </section>
 

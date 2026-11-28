@@ -43,4 +43,6 @@ export const STORAGE = {
   customOptions: "customOptions",
   merchantCategory: "merchantCategory",
   navPrefix: "nav:",
+  pendingInvite: "pendingInvite",
+  nudgesSeen: "nudgesSeen",
 } as const;

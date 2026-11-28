@@ -7,6 +7,8 @@ import { useCallback, useEffect, useState } from "react";
 import { demoBook, type Book } from "@/lib/data";
 import { clearBook, importBook, loadBook, setOpeningBalance, supabase } from "@/lib/store";
 import Dashboard from "@/components/Dashboard";
+import { inviteRedirect, isInviteCode, peekPendingInvite, takePendingInvite } from "@/components/sheets/Invite";
+import { acceptInvite, inviteInfo } from "@/lib/social";
 
 const field = "w-full rounded-2xl border border-line bg-soft px-4 py-3 text-base outline-none transition focus:border-ink focus:bg-card";
 
@@ -30,6 +32,18 @@ function Account({ session }: { session: Session }) {
   const [error, setError] = useState("");
   const [fresh, setFresh] = useState(false);
   const [busy, setBusy] = useState("");
+  // Invite link opened before signing in: accept it now, before the dashboard loads friends.
+  const [joining, setJoining] = useState(() => isInviteCode(peekPendingInvite() ?? ""));
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    const code = takePendingInvite();
+    if (!code) return;
+    acceptInvite(code)
+      .then(() => inviteInfo(code))
+      .then((i) => setNote({ ok: true, text: `You and ${i?.inviterName ?? "your friend"} are now friends` }))
+      .catch((e) => setNote({ ok: false, text: (e as Error).message }))
+      .finally(() => { setJoining(false); setTimeout(() => setNote(null), 5000); });
+  }, []);
 
   const reload = useCallback(() => loadBook().then(setBook).catch((e) => setError(e.message)), []);
   useEffect(() => { reload(); }, [reload]);
@@ -41,18 +55,19 @@ function Account({ session }: { session: Session }) {
 
   if (error) return <div className="grid min-h-screen place-items-center p-6 text-center"><div><p className="font-bold">Something went wrong</p><p className="mt-1 text-sm text-ink3">{error}</p><div className="mt-4 flex justify-center gap-2"><button onClick={() => { setError(""); reload(); }} className="rounded-full bg-ink px-5 py-2 text-sm font-semibold text-card">Retry</button><button onClick={() => supabase.auth.signOut({ scope: "local" })} className="rounded-full bg-soft px-5 py-2 text-sm font-semibold">Sign out</button></div></div></div>;
   if (busy) return <Splash text={busy} />;
-  if (!book) return <Splash />;
+  if (!book || joining) return <Splash text={joining ? "Adding your friend" : undefined} />;
 
   const empty = !book.started && !book.txns.length && !book.recurring.length && !book.goals.length;
+  const toast = note && <div role="status" className={`fixed left-1/2 top-[calc(1rem+env(safe-area-inset-top))] z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-2xl ${note.ok ? "bg-pop-green" : "bg-pop-pink"}`}>{note.text}</div>;
   if (empty && !fresh) {
-    return <Welcome email={session.user.email ?? ""} onDemo={() => run("Loading demo data", () => importBook(demoBook()))}
-      onFresh={(bal) => run("Setting up", async () => { await setOpeningBalance(bal); setFresh(true); })} />;
+    return <>{toast}<Welcome email={session.user.email ?? ""} onDemo={() => run("Loading demo data", () => importBook(demoBook()))}
+      onFresh={(bal) => run("Setting up", async () => { await setOpeningBalance(bal); setFresh(true); })} /></>;
   }
-  return <Dashboard book={book} setBook={(f) => setBook((b) => (b ? f(b) : b))} email={session.user.email ?? ""} onReset={() => run("Deleting your data", async () => { await clearBook(); setFresh(false); })} />;
+  return <>{toast}<Dashboard book={book} setBook={(f) => setBook((b) => (b ? f(b) : b))} email={session.user.email ?? ""} onReset={() => run("Deleting your data", async () => { await clearBook(); setFresh(false); })} /></>;
 }
 
 function AuthScreen() {
-  const [mode, setMode] = useState<"in" | "up">("in");
+  const [mode, setMode] = useState<"in" | "up">(() => (peekPendingInvite() ? "up" : "in"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -64,7 +79,7 @@ function AuthScreen() {
     setMsg(null);
     const { data, error } = mode === "in"
       ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } });
+      : await supabase.auth.signUp({ email, password, options: { emailRedirectTo: inviteRedirect(window.location.origin, peekPendingInvite()) } });
     setLoading(false);
     if (error) setMsg({ ok: false, text: error.message });
     else if (mode === "up" && !data.session) setMsg({ ok: true, text: "Check your inbox to confirm your email, then sign in." });

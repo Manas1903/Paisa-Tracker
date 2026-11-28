@@ -98,11 +98,21 @@ src/lib/
   store.ts            every Supabase read/write
 supabase/migrations/  schema history (apply in order)
 scripts/selftest.ts   logic regression checks          test/fixtures/  FAKE statements only
-docs/                 README screenshots (demo data only) + features.html (illustrated feature guide, light theme)
+docs/                 README screenshots (demo data only) + features.html (illustrated feature guide, light theme;
+                      also published at https://claude.ai/artifact/7B9Brmnj6TpieAHsdze5xe: republish it when features change)
 .env.example          env template                    next.config.ts  security headers
 ```
 
 Scripts: `npm run dev | check | test | db:push | db:local | deploy` (`deploy` = check + `vercel deploy --prod`; push DB migrations first with `db:push`).
+
+
+### Friends (shared splits, leaderboard, challenges)
+
+Words: `GLOSSARY.md`. Why shared splits have their own tables: `docs/adr/0001-shared-splits-own-tables.md`.
+- DB: `supabase/migrations/20261128000000_friends.sql`. Rows here are seen by more than one user, so every cross-user write is a security-definer function that checks the caller. Security test (local DB only): `scripts/friends-rls.ts`; run it after any change to that migration.
+- Data access: `src/lib/social.ts` (+ `demoSocial()` for /preview). Logic: `src/lib/splits.ts` (my share of shared splits becomes synthetic `split:` txns merged into totals, never saved), `src/lib/fairscore.ts` (fair score, `buildSharedStats`: percentages only, guarded), `src/lib/friendGames.ts`.
+- UI: `app/invite/[code]` landing, sheets People / Invite / SplitSheet / Updates / Challenge / GoalBuddy, cards Friends / Leaderboard. Wired in Dashboard.tsx.
+- Pass `book.txns` (not the merged list) wherever something is saved, edited or de-duplicated.
 
 ## Data model
 

@@ -6,17 +6,20 @@ import confetti from "canvas-confetti";
 import { useState } from "react";
 import type { Txn } from "@/lib/data";
 import { fmt } from "@/lib/format";
-import { fundQuestions, makeQuestions, type Question } from "@/lib/insights";
+import { fundQuestions, makeQuestions } from "@/lib/insights";
+import type { Social } from "@/lib/social";
+import { categoryPct } from "@/lib/fairscore";
+import { friendQuestions, type GameQuestion } from "@/lib/friendGames";
 import { Card } from "@/components/ui/primitives";
 import { QUIZ_ROUNDS } from "@/lib/config";
 
 const ROUNDS = QUIZ_ROUNDS;
 
-/** "Where did you spend more?" quiz built from your own transactions. */
-export function Game({ txns, now, holdings = [], i, className = "" }: {
-  txns: Txn[]; now: Date; holdings?: { name: string; gainPct: number }[]; i: number; className?: string;
+/** "Where did you spend more?" quiz built from your own transactions; `social` adds questions about friends who share stats. */
+export function Game({ txns, now, holdings = [], social, i, className = "" }: {
+  txns: Txn[]; now: Date; holdings?: { name: string; gainPct: number }[]; social?: Social; i: number; className?: string;
 }) {
-  const [qs, setQs] = useState<Question[] | null>(null);
+  const [qs, setQs] = useState<GameQuestion[] | null>(null);
   const [round, setRound] = useState(0);
   const [score, setScore] = useState(0);
   const [picked, setPicked] = useState<"a" | "b" | null>(null);
@@ -24,10 +27,12 @@ export function Game({ txns, now, holdings = [], i, className = "" }: {
   const start = () => {
     // Mix in one fund question when the portfolio has 2+ funds; the rest are spending questions.
     const funds = fundQuestions(holdings).sort(() => Math.random() - 0.5).slice(0, 1);
-    const qs = [...makeQuestions(txns, now, ROUNDS - funds.length), ...funds].sort(() => Math.random() - 0.5);
+    const friends = social ? friendQuestions(social, categoryPct(txns, now), now, 2) : [];
+    const extra = [...funds, ...friends];
+    const qs = [...makeQuestions(txns, now, ROUNDS - extra.length), ...extra].sort(() => Math.random() - 0.5);
     setQs(qs); setRound(0); setScore(0); setPicked(null);
   };
-  const show = (q: Question, v: number) => (q.unit === "pct" ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : fmt(v));
+  const show = (q: GameQuestion, v: number) => (q.unit === "pct" ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : q.unit === "share" ? `${Math.round(v)}%` : fmt(v));
   const q = qs?.[round];
   const done = qs && round >= qs.length;
 
@@ -90,7 +95,7 @@ export function Game({ txns, now, holdings = [], i, className = "" }: {
               {picked && (
                 <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-3 text-center text-sm font-semibold">
                   {(picked === "a") === q.a.value > q.b.value ? "✅ Correct!" : "❌ Nope!"}{" "}
-                  <span className="font-normal text-ink3">{q.unit === "pct" ? `${Math.abs(q.a.value - q.b.value).toFixed(1)} pts` : fmt(Math.abs(q.a.value - q.b.value))} difference</span>
+                  <span className="font-normal text-ink3">{q.unit === "pct" || q.unit === "share" ? `${Math.abs(q.a.value - q.b.value).toFixed(q.unit === "share" ? 0 : 1)} pts` : fmt(Math.abs(q.a.value - q.b.value))} difference</span>
                 </motion.p>
               )}
             </motion.div>

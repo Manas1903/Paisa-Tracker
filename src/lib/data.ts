@@ -26,6 +26,8 @@ export type Txn = {
   stockQuantity?: number; // shares bought in this lot
   stockUnitPrice?: number; // purchase price per share for this lot
   split?: SplitShare[]; // friends' shares of a bill you paid; `amount` is your share
+  paidBy?: string; // a friend paid the merchant: `amount` is your share, owed to them; your bank moves only when you pay them back
+  repaid?: number; // with paidBy: how much of your share you have paid back
 };
 
 export type SplitShare = { name: string; amount: number; settled: boolean };
@@ -300,7 +302,7 @@ export function demoBook(now = new Date()): Book {
   // One split dinner, so "Friends owe you" has something to show.
   const dinner = new Date(now.getFullYear(), now.getMonth(), Math.max(1, now.getDate() - 3), 21);
   txns.push({ id: "split1", date: dinner, amount: 1200, type: "expense", category: "Food", merchant: "Toit", mode: "UPI",
-    split: [{ name: "Aman", amount: 1200, settled: false }, { name: "Riya", amount: 1200, settled: false }] });
+    split: [{ name: "Neha", amount: 1200, settled: false }, { name: "Kunal", amount: 1200, settled: false }] });
   const monthsBack = (n: number) => new Date(now.getFullYear(), now.getMonth() - n, 5).toLocaleDateString("en-CA");
   return {
     txns, recurring, goals: demoGoals(), openingBalance: 150000, salaryCutoff: DEFAULT_SALARY_CUTOFF,

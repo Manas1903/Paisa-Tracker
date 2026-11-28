@@ -36,6 +36,11 @@ export function BankCard({ i, openingBalance, txns, onEdit }: { i: number; openi
           </li>
         ))}
       </ul>
+      {(f.owedToYou > 0 || f.youOwe > 0) && (
+        <p className="mt-2 text-xs text-ink3">
+          {[f.owedToYou > 0 && `Friends owe you ${fmt(f.owedToYou)}`, f.youOwe > 0 && `You owe friends ${fmt(f.youOwe)}`].filter(Boolean).join(" · ")}: not in the bank yet.
+        </p>
+      )}
       <button onClick={onEdit} className="mt-3 text-xs font-semibold text-ink3 underline">Edit starting balance</button>
     </Card>
   );

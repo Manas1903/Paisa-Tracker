@@ -6,11 +6,12 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Txn } from "@/lib/data";
 import { fmt, fmtShort } from "@/lib/format";
 import { wrapped } from "@/lib/wrapped";
+import type { FriendsWrapped } from "@/lib/friendGames";
 
 const BG = ["#8b5cf6", "#ff6b2c", "#10b981", "#ff4f8b", "#3b82f6", "#0b0b0b", "#ffc83d"];
 
-/** Year-in-review story slides. Tap right half → next, left half → back. */
-export function WrappedSheet({ open, onClose, txns, year }: { open: boolean; onClose: () => void; txns: Txn[]; year: number }) {
+/** Year-in-review story slides. Tap right half → next, left half → back. `friends` adds a fair-score comparison slide. */
+export function WrappedSheet({ open, onClose, txns, year, friends }: { open: boolean; onClose: () => void; txns: Txn[]; year: number; friends?: FriendsWrapped | null }) {
   const [k, setK] = useState(0);
   const w = open ? wrapped(txns, year) : null;
 
@@ -32,6 +33,11 @@ export function WrappedSheet({ open, onClose, txns, year }: { open: boolean; onC
     { kicker: "Future you got", big: fmt(w.invested), sub: "invested this year 📈" },
     ...(w.savedPct !== null ? [{ kicker: "You saved", big: `${w.savedPct.toFixed(0)}%`, sub: "of what you earned. Keep going 🔥" }] : []),
   ];
+  // Before the last slide, so the Share button (your own numbers only) stays on the last one.
+  if (w && friends) slides.splice(slides.length - 1, 0, {
+    kicker: "You vs friends", big: `#${friends.rank} of ${friends.friends.length + 1}`,
+    sub: `Average fair score: you ${friends.me} · ${friends.friends.map((f) => `${f.name} ${f.avg}`).join(" · ")}`,
+  });
   const i = Math.min(k, Math.max(slides.length - 1, 0));
 
   async function share() {

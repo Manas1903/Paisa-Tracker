@@ -149,6 +149,8 @@ ok("salary credit → income/Salary", drafts.some((d) => d.type === "income" && 
 const cardLunch = { ...T(new Date(2026, 10, 2), 1000, "expense", "Cafe", "Food", "Card"), account: "SBI Pulse", split: [{ name: "Aman", amount: 1000, settled: false }] };
 const cardSplitOwed = bankFlow([cardLunch]);
 ok("card split increases card due and records friend share owed", cardSplitOwed.cardDues === 2000 && cardSplitOwed.owedToYou === 1000, cardSplitOwed);
+const cardLunchPaid = bankFlow([cardLunch, { ...T(new Date(2026, 10, 20), 2000, "transfer", "Card bill", "Bills", "UPI"), account: "SBI Pulse" }]);
+ok("card split: friend share leaves bank once, via the bill", cardLunchPaid.bankSpend === 0 && cardLunchPaid.billsPaid === 2000 && cardLunchPaid.cardDues === 0, cardLunchPaid);
 const settledCardLunch = { ...cardLunch, split: [{ name: "Aman", amount: 1000, settled: true }] };
 const cardSplitSettled = bankFlow([settledCardLunch]);
 ok("settled card split reimbursement is bank income", cardSplitSettled.income === 1000 && cardSplitSettled.owedToYou === 0, cardSplitSettled);

@@ -4,7 +4,7 @@ const CATEGORY_NAMES: string[] = CATEGORIES.map((c) => c.name);
 
 /** Money in the bank: card spends leave it only when the bill is paid (a transfer). */
 export function bankFlow(txns: Txn[], before?: Date) {
-  let income = 0, bankSpend = 0, cardSpend = 0, invested = 0, billsPaid = 0, lent = 0, settled = 0, owed = 0;
+  let income = 0, bankSpend = 0, cardSpend = 0, invested = 0, billsPaid = 0, lent = 0, settled = 0, owed = 0, owe = 0;
   const cardBalance = new Map<string, number>();
   let unassignedCardPayments = 0;
   for (const t of txns) {
@@ -13,7 +13,8 @@ export function bankFlow(txns: Txn[], before?: Date) {
     // and comes back into the bank when they pay. The row's `amount` is only your share.
     const shares = (t.split ?? []).reduce((a, sh) => a + sh.amount, 0);
     if (shares) {
-      lent += shares;
+      // On a card, friends' shares leave the bank later, inside the card bill payment, so only count them here otherwise.
+      if (!isCardSpend(t)) lent += shares;
       for (const sh of t.split!) { if (sh.settled) settled += sh.amount; else owed += sh.amount; }
     }
     if (t.type === "income") income += t.amount;
@@ -22,6 +23,11 @@ export function bankFlow(txns: Txn[], before?: Date) {
       billsPaid += t.amount;
       if (t.account) cardBalance.set(t.account, (cardBalance.get(t.account) ?? 0) - t.amount);
       else unassignedCardPayments += t.amount;
+    } else if (t.paidBy) {
+      // A friend paid: only what you've paid them back has left the bank; the rest you still owe.
+      const back = Math.min(t.repaid ?? 0, t.amount);
+      bankSpend += back;
+      owe += t.amount - back;
     } else if (isCardSpend(t)) {
       const signed = expenseAmount(t) + (t.isRefund ? 0 : (t.split ?? []).reduce((n, share) => n + share.amount, 0));
       cardSpend += signed;
@@ -29,7 +35,7 @@ export function bankFlow(txns: Txn[], before?: Date) {
     } else bankSpend += expenseAmount(t);
   }
   return {
-    income: income + settled, bankSpend: bankSpend + lent, cardSpend, invested, billsPaid, owedToYou: owed,
+    income: income + settled, bankSpend: bankSpend + lent, cardSpend, invested, billsPaid, owedToYou: owed, youOwe: owe,
     cardDues: Math.max(0, [...cardBalance.values()].reduce((sum, balance) => sum + Math.max(0, balance), 0) - unassignedCardPayments),
     unassignedCardPayments,
   };
@@ -96,7 +102,7 @@ export function netWorth({ txns, recurring, openingBalance }: Book, now: Date, m
     const invest = isNow && mfNow ? investValueAt(txns, end) - growth(mfNow.invested, txns, end) + mfNow.value : investValueAt(txns, end);
     const loans = loansAt(recurring, txns, end), dues = f.cardDues;
     const label = i === months - 1 ? "Now" : new Date(end.getTime() - DAY).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
-    return { label, cash, invest, loans, dues, owed: f.owedToYou, value: cash + invest - loans - dues + f.owedToYou };
+    return { label, cash, invest, loans, dues, owed: f.owedToYou, owe: f.youOwe, value: cash + invest - loans - dues + f.owedToYou - f.youOwe };
   });
   return points;
 }
@@ -212,7 +218,7 @@ export const LEVELS = [
   { name: "FI legend", at: 22000 },
 ];
 
-export function level(txns: Txn[], s: ReturnType<typeof streaks>, badgeCount: number) {
+export function level(txns: Txn[], s: ReturnType<typeof streaks>, badgeCount: number, extra: { label: string; xp: number }[] = []) {
   const days = new Set(txns.map((t) => ymd(t.date))).size;
   const parts = [
     { label: "Days logged", xp: days * 10 },
@@ -220,6 +226,7 @@ export function level(txns: Txn[], s: ReturnType<typeof streaks>, badgeCount: nu
     { label: "Saver months", xp: s.saver * 100 },
     { label: "Badges", xp: badgeCount * 200 },
     { label: "Card bills paid", xp: txns.filter((t) => t.type === "transfer").length * 100 },
+    ...extra,
   ];
   const xp = parts.reduce((a, p) => a + p.xp, 0);
   const i = LEVELS.findLastIndex((l) => xp >= l.at);

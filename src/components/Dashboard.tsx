@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowDownRight, ArrowUpRight, BarChart3, CalendarPlus, FileSpreadsheet, Printer, Settings, Sparkles, CreditCard as CreditCardIcon, FileUp, LogOut, SlidersHorizontal, Trash2, CalendarClock, CalendarDays, Car, Flame, GitFork, Landmark, Lightbulb, LineChart, ListOrdered,
-  Moon, PieChart, PiggyBank, Plus, Receipt, Repeat, Scale, Store, Sun, TrendingUp, Wallet,
+  Moon, PieChart, PiggyBank, Plus, Receipt, Repeat, Scale, Store, Sun, TrendingUp, UserPlus, Users, Wallet,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -37,6 +37,16 @@ import { stockPositions } from "@/lib/stocks";
 import { BadgesCard, Celebration, ChallengesCard, FireCard, GoalsCard, LevelCard, NetWorthCard, Reframes, ReportCard, StreaksCard } from "@/components/cards/Motivation";
 import { Bar, Card, Chip, Empty, Tile, type Pop } from "@/components/ui/primitives";
 import { STORAGE } from "@/lib/config";
+import { demoSocial, loadSocial, loadUpdates, publishStats, setMyName, type Social, type SplitUpdate } from "@/lib/social";
+import { sharedSplitId, sharedSplitTxns } from "@/lib/splits";
+import { buildSharedStats } from "@/lib/fairscore";
+import { challengeXp, friendsWrapped, nudges } from "@/lib/friendGames";
+import { PeopleSheet } from "@/components/sheets/People";
+import { InviteSheet, nameError } from "@/components/sheets/Invite";
+import { SplitSheet } from "@/components/sheets/SplitSheet";
+import { UpdatesSheet } from "@/components/sheets/Updates";
+import { Leaderboard } from "@/components/cards/Leaderboard";
+import { Modal } from "@/components/sheets/Forms";
 import { DAY } from "@/lib/dates";
 import {
   Chart, barsOption, chartTheme, compareBarsOption, donutOption, heatmapOption, sankeyOption, trendOption, type Flow, type Slice,
@@ -67,7 +77,25 @@ export default function Dashboard({ book, setBook, email, onReset }: {
   book: Book; setBook: (f: (b: Book) => Book) => void; email: string; onReset: () => void;
 }) {
   const { recurring } = book;
-  const rawTxns = book.txns; // real dates: lists, editing, duplicate checks
+  const demo = email === "preview@local";
+  // ---- friends: shared splits, stats, challenges (lib/social.ts) ----
+  const [social, setSocial] = useState<Social | null>(() => (demo ? demoSocial() : null));
+  const [updates, setUpdates] = useState<SplitUpdate[]>([]);
+  useEffect(() => {
+    if (demo) return;
+    let alive = true;
+    loadSocial().then(async (s) => {
+      if (!alive) return;
+      setSocial(s);
+      const u = await loadUpdates(s.me, s.updatesSeenAt).catch(() => []);
+      if (alive) setUpdates(u);
+    }).catch(() => {}); // friends are optional: the money dashboard works without them
+    return () => { alive = false; };
+  }, [demo]);
+  // My share of shared splits joins my own entries for every total. Never saved: `book.txns` is what gets saved.
+  const shared = useMemo(() => (social ? sharedSplitTxns(social) : []), [social]);
+  const rawTxns = useMemo(() => [...book.txns, ...shared], [book.txns, shared]); // real dates: lists, editing, duplicate checks
+  const calcBook = useMemo(() => ({ ...book, txns: rawTxns }), [book, rawTxns]);
   // Month maths: late-month salary counts for the next month (setting).
   const txns = useMemo(() => forMonthMaths(rawTxns, book.salaryCutoff), [rawTxns, book.salaryCutoff]);
   const cards = book.cards ?? [];
@@ -136,24 +164,45 @@ export default function Dashboard({ book, setBook, email, onReset }: {
       value: mf.holdings.reduce((a, h) => a + h.value, 0) + fixedIncome.reduce((a, h) => a + h.value, 0) + stockValue,
       invested: mf.holdings.reduce((a, h) => a + h.invested, 0) + fixedIncome.reduce((a, h) => a + h.invested, 0) + stockInvested,
     } : undefined;
-    const nw = netWorth(book, now, undefined, mfNow);
+    const nw = netWorth(calcBook, now, undefined, mfNow);
     const nwNow = nw[nw.length - 1].value;
     const mfTotals = mf.holdings.length || stocks.length ? {
       value: mf.holdings.reduce((a, h) => a + h.value, 0) + stocks.reduce((a, h) => a + (h.value ?? h.invested), 0),
       gain: mf.holdings.reduce((a, h) => a + h.gain, 0) + stocks.reduce((a, h) => a + (h.gain ?? 0), 0),
     } : undefined;
-    const b = badges(book, now, s, nwNow, mfTotals);
+    const b = badges(calcBook, now, s, nwNow, mfTotals);
     return {
       s, nw, b,
       ms: milestone(nwNow, nw[nw.length - 2].value),
       lv: level(txns, s, b.filter((x) => x.got).length),
-      rc: reportCard(book, now),
-      f: fire(book, now, mfNow),
-      budgets: budgetStatus(txns, book.budgets ?? {}, now),
-      ch: challenges(txns, now, s, cardUtilisation(book)),
-      lines: reframes(book, now),
+      rc: reportCard(calcBook, now),
+      f: fire(calcBook, now, mfNow),
+      budgets: budgetStatus(txns, calcBook.budgets ?? {}, now),
+      ch: challenges(txns, now, s, cardUtilisation(calcBook)),
+      lines: reframes(calcBook, now),
     };
-  }, [book, txns, now, mf.holdings, fixedIncome, stocks]);
+  }, [calcBook, txns, now, mf.holdings, fixedIncome, stocks]);
+
+  // What friends see (percentages only) and XP from friend challenges.
+  const mine = useMemo(() => buildSharedStats(calcBook, now, mot.lv.n), [calcBook, now, mot.lv.n]);
+  const lv = useMemo(() => {
+    const xp = social ? challengeXp(social, mine, now) : 0;
+    return xp ? level(txns, mot.s, mot.b.filter((x) => x.got).length, [{ label: "Challenges won", xp }]) : mot.lv;
+  }, [social, mine, now, txns, mot]);
+  const published = useRef("");
+  useEffect(() => {
+    if (demo || !social || !social.friends.some((f) => f.iShare)) return;
+    const json = JSON.stringify(mine);
+    if (json === published.current) return;
+    const t = setTimeout(() => publishStats(social.me, mine).then(() => { published.current = json; }).catch(() => {}), 2000);
+    return () => clearTimeout(t);
+  }, [demo, social, mine]);
+  const nudgeLines = useMemo(() => (social ? nudges(social, now) : []), [social, now]);
+  const [updatesClosed, setUpdatesClosed] = useState(() => { try { return localStorage.getItem(STORAGE.nudgesSeen) ?? ""; } catch { return ""; } });
+  const freshNudges = nudgeLines.filter((n) => !updatesClosed.split(",").includes(n.id));
+  const [people, setPeople] = useState<"friends" | "invite" | null>(null);
+  const [openSplit, setOpenSplit] = useState<string | null>(null);
+  const [myName, setMyNameDraft] = useState("");
 
   const [celebrate, setCelebrate] = useState(false);
   useEffect(() => {
@@ -358,7 +407,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
 
   /** Mark every open share of this friend as paid back. */
   async function settleFriend(name: string) {
-    const open = rawTxns.filter((t) => t.split?.some((sh) => sh.name === name && !sh.settled));
+    const open = book.txns.filter((t) => t.split?.some((sh) => sh.name === name && !sh.settled));
     try {
       const updated = await Promise.all(open.map((t) => updateTxn({ ...t, split: t.split!.map((sh) => (sh.name === name ? { ...sh, settled: true } : sh)) })));
       const byId = new Map(updated.map((t) => [t.id, t]));
@@ -403,7 +452,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
   // ---- cards: each one can be moved or hidden (Customize) ----
   const sections: { key: string; title: string; node: ReactNode }[] = [
     { key: "level", title: "Level & XP", node: (
-            <LevelCard lv={mot.lv} i={0} />
+            <LevelCard lv={lv} i={0} />
     ) },
     { key: "report", title: "Report card", node: (
             <ReportCard rc={mot.rc} i={1} />
@@ -458,7 +507,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
             <FireCard f={mot.f} i={3} />
     ) },
     { key: "game", title: "Higher or lower game", node: (
-            <Game txns={txns} now={now} holdings={mf.holdings} i={0} className="lg:col-span-2" />
+            <Game txns={txns} now={now} holdings={mf.holdings} social={social ?? undefined} i={0} className="lg:col-span-2" />
     ) },
     { key: "challenges", title: "Challenges", node: (
             <ChallengesCard list={mot.ch} i={1} />
@@ -576,8 +625,11 @@ export default function Dashboard({ book, setBook, email, onReset }: {
       <CreditScoreCard i={1} T={T} scores={book.creditScores ?? []} onSave={(creditScores) => saveCardsSettings({ creditScores })}
         cardUtil={(() => { const u = cardUtilisation(book); const lim = u.reduce((a, x) => a + x.limit, 0); return lim ? u.reduce((a, x) => a + x.due, 0) / lim : null; })()} />
     ) },
-    { key: "friends", title: "Friends owe you", node: (
-      <FriendsCard i={2} txns={rawTxns} onSettle={settleFriend} />
+    { key: "friends", title: "Friends", node: (
+      <FriendsCard i={2} txns={book.txns} onSettle={settleFriend} social={social} demo={demo} onSocialChange={setSocial} onOpenSplit={setOpenSplit} />
+    ) },
+    { key: "leaderboard", title: "Friends leaderboard", node: social && (
+      <Leaderboard social={social} onSocial={(f) => setSocial((s) => (s ? f(s) : s))} mine={mine} goals={book.goals} now={now} demo={demo} i={1} />
     ) },
     { key: "goals", title: "Goals", node: (
             <GoalsCard i={0} now={now} goals={book.goals} loan={[...emis].sort((a, b) => b.tenure! - a.tenure!)[0]} action={plus("goal", "Add goal")}
@@ -633,7 +685,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
                     <motion.li key={t.id} layout initial={{ opacity: 0, y: -16, backgroundColor: "rgba(185,242,106,0.5)" }}
                       animate={{ opacity: 1, y: 0, backgroundColor: "rgba(185,242,106,0)" }} exit={{ opacity: 0 }} transition={{ duration: 0.7 }}
                       className="rounded-xl hover:bg-soft">
-                      <button type="button" onClick={() => setEditTxn(t)} className="flex w-full items-center gap-3 px-2 py-2.5 text-left">
+                      <button type="button" onClick={() => { const id = sharedSplitId(t); if (id) setOpenSplit(id); else setEditTxn(t); }} className="flex w-full items-center gap-3 px-2 py-2.5 text-left">
                       {t.account ? <CardChip name={t.account} /> : (
                         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] text-xs font-black text-white"
                           style={{ background: t.type === "expense" ? colorOf(displayCategory(t.category), dark) : t.type === "income" ? "#10b981" : "#8b5cf6" }}>
@@ -667,8 +719,8 @@ export default function Dashboard({ book, setBook, email, onReset }: {
           <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-4 flex flex-wrap items-center gap-2 text-sm text-ink3">
             <span>{now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</span>
             <span className="flex items-center gap-1.5 rounded-full bg-ink py-1 pl-1 pr-3 text-xs font-semibold text-card">
-              <span className="grid h-5 w-5 place-items-center rounded-full bg-pop-lime text-[10px] font-black text-black">{mot.lv.n}</span>
-              {mot.lv.name}
+              <span className="grid h-5 w-5 place-items-center rounded-full bg-pop-lime text-[10px] font-black text-black">{lv.n}</span>
+              {lv.name}
             </span>
           </motion.div>
           <motion.h1 initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
@@ -699,6 +751,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
             { label: "Export to Excel", icon: <FileSpreadsheet size={16} />, run: () => exportExcel(book).catch((e) => fail(e)) },
             { label: "Print / save as PDF", icon: <Printer size={16} />, run: () => window.print() },
             { label: `${now.getFullYear()} Money Wrapped`, icon: <Sparkles size={16} />, run: () => setForm("wrapped") },
+            ...(social ? [{ label: "Friends", icon: <Users size={16} />, run: () => setPeople("friends") }] : []),
           ]} />
         <motion.button whileTap={{ scale: 0.9, rotate: 20 }} onClick={() => setDark(!dark)} aria-label="Toggle theme"
           className="grid h-11 w-11 place-items-center rounded-full border border-line bg-card shadow-card">
@@ -730,6 +783,7 @@ export default function Dashboard({ book, setBook, email, onReset }: {
 
       <ActionMenu actions={[
         { label: "Add expense / income", icon: <Plus size={18} />, run: () => setAdding(true) },
+        ...(social ? [{ label: "Invite a friend", icon: <UserPlus size={18} />, run: () => setPeople("invite") }] : []),
         { label: "Import statement (PDF / CSV)", icon: <FileUp size={18} />, run: () => setForm("import") },
         { label: "Pay card bill", icon: <CreditCardIcon size={18} />, run: () => setPayPreset({ type: "transfer", account: cards[0]?.name }) },
         { label: "Add EMI / SIP / bill", icon: <Repeat size={18} />, run: () => { setEditRec(null); setForm("recurring"); } },
@@ -741,15 +795,38 @@ export default function Dashboard({ book, setBook, email, onReset }: {
       <QuickAdd key={editTxn?.id ?? (payPreset ? `pay-${payPreset.account}` : "new")} open={adding || !!editTxn || !!payPreset}
         onClose={() => { setAdding(false); setEditTxn(null); setPayPreset(null); }}
         editing={editTxn ?? payPreset ?? undefined} onAdd={editTxn ? saveTxnEdit : add} onDelete={editTxn ? () => removeTxn(editTxn.id) : undefined}
-        cards={cards} onAddCard={addCard} txns={rawTxns} />
+        cards={cards} onAddCard={addCard} txns={book.txns} social={social} demo={demo} onSocialChange={setSocial} onInvite={() => setPeople("invite")} />
       <RecurringForm key={editRec?.id ?? "new-rec"} open={form === "recurring"} onClose={closeForms} initial={editRec ?? undefined}
         pastCount={editRec ? txns.filter((t) => t.recurringId === editRec.id).length : 0}
         onSave={editRec ? saveRecEdit : (r) => saveRecurring(r)} onDelete={editRec ? () => removeRec(editRec.id!) : undefined} />
       <GoalForm key={editGoal?.id ?? "new-goal"} open={form === "goal"} onClose={closeForms} initial={editGoal ?? undefined}
         onSave={editGoal ? saveGoalEdit : saveGoal} onDelete={editGoal ? () => removeGoal(editGoal.id!) : undefined} />
-      <ImportSheet open={form === "import"} onClose={closeForms} existing={rawTxns} onImport={importTxns} cards={cards.map((c) => c.name)} onAddCard={addCard} />
+      <ImportSheet open={form === "import"} onClose={closeForms} existing={book.txns} onImport={importTxns} cards={cards.map((c) => c.name)} onAddCard={addCard} />
       <BudgetSheet key={`bg-${form === "budgets"}`} open={form === "budgets"} onClose={closeForms} budgets={book.budgets ?? {}} avg={avgSpend} onSave={(budgets) => saveCardsSettings({ budgets })} />
-      <WrappedSheet key={`wr-${form === "wrapped"}`} open={form === "wrapped"} onClose={closeForms} txns={rawTxns} year={now.getFullYear()} />
+      <WrappedSheet key={`wr-${form === "wrapped"}`} open={form === "wrapped"} onClose={closeForms} txns={rawTxns} year={now.getFullYear()}
+        friends={social && form === "wrapped" ? friendsWrapped(calcBook, social, now.getFullYear(), now) : null} />
+      {social && <>
+        <PeopleSheet open={people === "friends"} onClose={() => setPeople(null)} social={social} demo={demo} onChange={setSocial} />
+        <InviteSheet open={people === "invite"} onClose={() => setPeople(null)} social={social} demo={demo} onChange={setSocial} />
+        <SplitSheet key={openSplit ?? "none"} split={social.splits.find((x) => x.id === openSplit) ?? null} social={social} demo={demo}
+          cards={cards} onAddCard={addCard} onChange={setSocial} onClose={() => setOpenSplit(null)} />
+        <UpdatesSheet open={updates.length > 0 || freshNudges.length > 0} updates={updates} extra={freshNudges} social={social} demo={demo} onChange={setSocial}
+          onClose={() => {
+            const seen = [...new Set([...updatesClosed.split(",").filter(Boolean), ...nudgeLines.map((n) => n.id)])].slice(-100).join(",");
+            try { localStorage.setItem(STORAGE.nudgesSeen, seen); } catch {}
+            setUpdatesClosed(seen); setUpdates([]);
+          }} />
+        {/* someone who joined from an invite link has no display name yet: ask once, so friends don't see "Friend" */}
+        <Modal open={!demo && !social.myName && social.friends.length > 0 && people === null} onClose={() => {}} title="What should friends call you?"
+          submitLabel="Save" onSubmit={() => {
+            if (nameError(myName)) return;
+            setMyName(social.me, myName).then(() => setSocial((s) => s && { ...s, myName: myName.trim(), names: { ...s.names, [s.me]: myName.trim() } })).catch((e) => fail(e));
+          }}>
+          <input value={myName} onChange={(e) => setMyNameDraft(e.target.value)} maxLength={40} placeholder="Your name" autoFocus
+            className="w-full rounded-2xl border border-line bg-soft px-3 py-3 text-base outline-none focus:border-ink focus:bg-card" />
+          {myName && nameError(myName) && <p className="mt-1 text-xs text-pop-pink">{nameError(myName)}</p>}
+        </Modal>
+      </>}
       <SettingsSheet key={`st-${form === "settings"}`} open={form === "settings"} onClose={closeForms} cards={cards} salaryCutoff={book.salaryCutoff ?? null} onSave={saveCardsSettings} />
       <CustomizeSheet key={`cz-${form === "customize"}`} open={form === "customize"} onClose={closeForms} sections={sections} layout={layout} onSave={persistLayout} />
       <BalanceForm key={`bal-${book.openingBalance}`} open={form === "balance"} onClose={closeForms} initial={book.openingBalance} onSave={saveBalance} />

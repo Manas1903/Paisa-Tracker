@@ -3,7 +3,10 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { CATEGORIES, type CreditCard, type Mode, type Txn, type TxnType } from "@/lib/data";
+import { CATEGORIES, type CreditCard, type Mode, type SplitShare, type Txn, type TxnType } from "@/lib/data";
+import type { Social } from "@/lib/social";
+import { guessPlan, planShares, type Plan } from "@/lib/splits";
+import { errText, saveShared, ShareEditor, type Person } from "@/components/sheets/SplitSheet";
 import { DeleteButton } from "@/components/sheets/Forms";
 import { CardPicker } from "@/components/ui/CardChip";
 import { bestCardForSpend, estimateCardReward } from "@/lib/cards";
@@ -22,15 +25,30 @@ const MODES: Mode[] = ["UPI", "Card", "DebitCard", "Cash", "NetBanking", "AutoPa
 
 const field = "w-full min-w-0 rounded-2xl border border-line bg-soft px-3 py-2.5 text-base outline-none transition focus:border-ink focus:bg-card";
 
-/** Add a transaction, or edit one when `editing` is set (remount with a new `key` per item). */
-export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAddCard, txns }: {
+const MIXED = "Split with linked friends or with name-only friends, not both in one split.";
+const nameKey = (n: string) => `n:${n}`;
+
+/**
+ * Add a transaction, or edit one when `editing` is set (remount with a new `key` per item).
+ * Split: the amount box holds the full bill. Linked friends → a shared split (saveSplit, no row of mine);
+ * name-only friends → my own row with `split` (I paid; `amount` is my share).
+ */
+export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAddCard, txns, social, demo, onSocialChange, onInvite }: {
   open: boolean; onClose: () => void; onAdd: (t: Txn) => Promise<boolean>; editing?: Partial<Txn>; onDelete?: () => Promise<boolean>;
   cards: CreditCard[]; onAddCard: (name: string) => void; txns: Txn[];
+  social?: Social | null; demo?: boolean; onSocialChange?: (s: Social) => void; onInvite?: () => void;
 }) {
   const cardNames = cards.map((c) => c.name);
-  // Split: the amount box holds the full bill; your share is what's left after friends' equal shares.
-  const [friends, setFriends] = useState(editing?.split?.map((s) => s.name).join(", ") ?? "");
+  const meId = "me"; // my key in this form; becomes social.me when saving a shared split
   const [splitOn, setSplitOn] = useState(!!editing?.split?.length);
+  const [linked, setLinked] = useState<string[]>([]);
+  const [names, setNames] = useState<string[]>(() => [...new Set(editing?.split?.map((s) => s.name) ?? [])]);
+  const [nameText, setNameText] = useState("");
+  const [payer, setPayer] = useState(meId);
+  const [initial] = useState(() => editing?.split?.length ? guessPlan(editing.amount! + editing.split.reduce((a, x) => a + x.amount, 0),
+    [{ userId: meId, amount: editing.amount! }, ...editing.split.map((x) => ({ userId: nameKey(x.name), amount: x.amount }))], meId) : null);
+  const [plan, setPlan] = useState<Plan>(initial?.plan ?? "equal");
+  const [custom, setCustom] = useState<Record<string, string>>(initial?.custom ?? {});
   const [type, setType] = useState<TxnType>(editing?.type ?? "expense");
   const [amount, setAmount] = useState(editing?.amount ? String(editing.amount + (editing.split ?? []).reduce((a, s) => a + s.amount, 0)) : "");
   const [account, setAccount] = useState(editing?.account ?? cards[0]?.name ?? "");
@@ -52,6 +70,18 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
   const [stockUnitPrice, setStockUnitPrice] = useState(editing?.stockUnitPrice == null ? "" : String(editing.stockUnitPrice));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const typed = nameText.split(",").map((f) => f.trim()).filter(Boolean);
+  const nameList = [...new Set([...names, ...typed])];
+  const splitting = type === "expense" && splitOn && (linked.length > 0 || nameList.length > 0);
+  const mixed = splitting && linked.length > 0 && nameList.length > 0;
+  const people: Person[] = [{ id: meId, name: "You" },
+    ...linked.map((id) => ({ id, name: social?.names[id] ?? social?.friends.find((f) => f.id === id)?.name ?? "Friend" })),
+    ...nameList.map((n) => ({ id: nameKey(n), name: n }))];
+  const shared = splitting && !mixed && linked.length > 0;
+  const splitPayer = shared && people.some((p) => p.id === payer) ? payer : meId; // name-only: always me
+  const splitPlan: Plan = people.length > 2 && plan === "full" ? "equal" : plan;
+  const friendPays = shared && splitPayer !== meId;
+  const commitNames = () => { if (typed.length) { setNames(nameList); setNameText(""); } };
   const dialogRef = useRef<HTMLFormElement>(null);
   const closeRef = useRef(onClose);
   useEffect(() => { closeRef.current = onClose; }, [onClose]);
@@ -95,19 +125,38 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
     const clock = editing?.date ?? new Date(); // keep the original time of day when editing
     const when = new Date(y, m - 1, d, clock.getHours(), clock.getMinutes(), clock.getSeconds());
     if (isNaN(when.getTime())) return setErr("Pick a valid date");
-    const onCard = type === "transfer" || (type === "expense" && mode === "Card");
+    const onCard = type === "transfer" || (type === "expense" && mode === "Card" && !friendPays);
     if (onCard && !account) return setErr("Pick or add the card");
-    const names = splitOn && type === "expense" ? friends.split(",").map((f) => f.trim()).filter(Boolean) : [];
-    const share = names.length ? Math.round((n / (names.length + 1)) * 100) / 100 : 0;
-    const settledBefore = new Map((editing?.split ?? []).map((sh) => [sh.name, sh.settled]));
-    const split = names.map((name) => ({ name, amount: share, settled: settledBefore.get(name) ?? false }));
-    const mine = Math.round((n - share * names.length) * 100) / 100;
+    let split: SplitShare[] | undefined, mine = n;
+    if (splitting) {
+      if (mixed) return setErr(MIXED);
+      const res = planShares(n, people.map((p) => p.id), splitPayer, splitPlan, custom);
+      if (res.error) return setErr(res.error);
+      if (shared) {
+        if (!social || !onSocialChange) return setErr("Friends haven't loaded yet. Please retry.");
+        setBusy(true);
+        try {
+          const user = (id: string) => (id === meId ? social.me : id);
+          await saveShared(social, demo, { payer: user(splitPayer), total: n, date: when, merchant: merchant.trim() || category, category,
+            shares: res.shares.map((x) => ({ ...x, userId: user(x.userId) })),
+            mine: friendPays ? undefined : { mode, account: onCard ? account : undefined } }, onSocialChange);
+        } catch (error) { setErr(errText(error)); return; }
+        finally { setBusy(false); }
+        setAmount(""); setMerchant(""); setDate(""); setLinked([]); setNames([]); setNameText(""); setSplitOn(false);
+        onClose();
+        return;
+      }
+      mine = res.shares.find((x) => x.userId === meId)!.amount;
+      if (!(mine > 0)) return setErr("With name-only friends your share must be more than ₹0. Link them as friends to record a bill they owe in full.");
+      const settledBefore = new Map((editing?.split ?? []).map((sh) => [sh.name, sh.settled]));
+      split = nameList.map((name) => ({ name, amount: res.shares.find((x) => x.userId === nameKey(name))!.amount, settled: settledBefore.get(name) ?? false }));
+    }
     setBusy(true);
     let ok = false;
     try { ok = await onAdd(type === "transfer"
       ? { id: editing?.id ?? crypto.randomUUID(), date: when, amount: n, type, category: "Card bill", merchant: merchant.trim() || `${account} bill`, mode: "NetBanking", account }
-      : { id: editing?.id ?? crypto.randomUUID(), date: when, amount: names.length ? mine : n, type, category, merchant: merchant.trim() || category, mode,
-          recurringId: editing?.recurringId, account: onCard ? account : undefined, split: names.length ? split : undefined,
+      : { id: editing?.id ?? crypto.randomUUID(), date: when, amount: mine, type, category, merchant: merchant.trim() || category, mode,
+          recurringId: editing?.recurringId, account: onCard ? account : undefined, split,
           annualRate: type === "invest" && (category === "FD" || category === "RD") ? Number(annualRate) : undefined,
           tenureMonths: type === "invest" && (category === "FD" || category === "RD") ? Number(tenureMonths) : undefined,
           institution: type === "invest" && (category === "FD" || category === "RD") ? institution.trim() || undefined : undefined,
@@ -175,10 +224,10 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
               {type !== "transfer" && <>
                 <PickOrAdd value={category} options={[...CATS[type], ...(extra[type] ?? [])]} onChange={setCategory}
                   onAdd={(v) => addOption(type, v, setCategory)} placeholder="New category" />
-                <PickOrAdd value={mode} options={[...MODES, ...(extra.mode ?? [])]} onChange={setMode}
-                  onAdd={(v) => addOption("mode", v, setMode)} placeholder="New payment mode" />
+                {!friendPays && <PickOrAdd value={mode} options={[...MODES, ...(extra.mode ?? [])]} onChange={setMode}
+                  onAdd={(v) => addOption("mode", v, setMode)} placeholder="New payment mode" />}
               </>}
-              {(type === "transfer" || (type === "expense" && mode === "Card")) && (
+              {(type === "transfer" || (type === "expense" && mode === "Card" && !friendPays)) && (
                 <div className="col-span-2">
                   <CardPicker value={account} cards={cardNames} onChange={setAccount} onAdd={onAddCard} />
                   {type === "expense" && (() => {
@@ -220,18 +269,33 @@ export function QuickAdd({ open, onClose, onAdd, editing, onDelete, cards, onAdd
                   Split with friends
                   <input type="checkbox" checked={splitOn} onChange={(e) => setSplitOn(e.target.checked)} className="h-5 w-5 accent-black" />
                 </label>
-                {splitOn && (() => {
-                  const names = friends.split(",").map((f) => f.trim()).filter(Boolean);
-                  const total = Number(amount) || 0, each = names.length ? total / (names.length + 1) : 0;
-                  return (
-                    <div className="mt-2 space-y-1.5">
-                      <input value={friends} onChange={(e) => setFriends(e.target.value)} placeholder="Names, e.g. Aman, Riya" className={field} />
-                      {names.length > 0 && total > 0 && (
-                        <p className="text-xs text-ink2">Equal split: {names.length + 1} people × ₹{Math.round(each).toLocaleString("en-IN")}. Your spend ₹{Math.round(total - each * names.length).toLocaleString("en-IN")}, friends owe ₹{Math.round(each * names.length).toLocaleString("en-IN")}.</p>
-                      )}
+                {splitOn && (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      {!editing?.id && social?.friends.map((f) => (
+                        <button key={f.id} type="button" aria-pressed={linked.includes(f.id)}
+                          onClick={() => setLinked(linked.includes(f.id) ? linked.filter((x) => x !== f.id) : [...linked, f.id])}
+                          className={`rounded-full px-3 py-1.5 text-xs font-semibold ${linked.includes(f.id) ? "bg-ink text-card" : "border border-line bg-card text-ink2"}`}>{f.name}</button>
+                      ))}
+                      {names.map((n) => (
+                        <button key={n} type="button" onClick={() => setNames(names.filter((x) => x !== n))} aria-label={`Remove ${n}`}
+                          className="flex items-center gap-1 rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-card">{n}<X size={12} /></button>
+                      ))}
                     </div>
-                  );
-                })()}
+                    <div className="flex gap-1.5">
+                      <input value={nameText} onChange={(e) => setNameText(e.target.value)} onBlur={commitNames}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitNames(); } }}
+                        placeholder="Name-only friend, e.g. Aman" className={field} />
+                      {onInvite && <button type="button" onClick={onInvite} className="shrink-0 rounded-2xl border border-dashed border-line px-3 text-xs font-semibold text-ink2">＋ Invite new</button>}
+                    </div>
+                    {mixed && <p className="text-xs font-medium text-pop-orange">{MIXED}</p>}
+                    {!mixed && people.length > 1 && (
+                      <ShareEditor total={Math.round((Number(amount) || 0) * 100) / 100} people={people} payer={splitPayer} setPayer={setPayer}
+                        plan={splitPlan} setPlan={setPlan} custom={custom} setCustom={setCustom} mePays={!shared} noFull={!shared} />
+                    )}
+                    {friendPays && <p className="text-xs text-ink3">Your share counts as spent today. Your bank moves only when you settle up.</p>}
+                  </div>
+                )}
               </div>
             )}
 
