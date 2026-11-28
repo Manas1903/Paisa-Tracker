@@ -16,6 +16,8 @@ Works on any device and installs on iPhone like an app.
 
 ## Video demo
 
+Play the full walkthrough below.
+
 https://github.com/user-attachments/assets/d192250c-9e9c-4ace-9b27-fb6750c52a6f
 
 My money app now splits bills with friends: a ₹2,000 dinner only counts ₹1,000 as my spending, and the friends leaderboard ranks who saves best, not who earns most. Free, installs on your iPhone: [paisa-tracker-app.vercel.app](https://paisa-tracker-app.vercel.app).
