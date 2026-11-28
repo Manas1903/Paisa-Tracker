@@ -14,6 +14,12 @@ Works on any device and installs on iPhone like an app.
 - **Tap anything** you added to edit or delete it. **Customize** reorders or hides cards.
 - First time: 👤 → **Cards & settings** → add your credit cards (limit and due day are optional).
 
+## Video demo
+
+[![Watch the Paisa Tracker demo](public/video-demo/paisa-tracker-launch-thumbnail.jpeg)](public/video-demo/paisa-tracker-launch-video.mp4)
+
+My money app now splits bills with friends: a ₹2,000 dinner only counts ₹1,000 as my spending, and the friends leaderboard ranks who saves best, not who earns most. Free, installs on your iPhone: [paisa-tracker-app.vercel.app](https://paisa-tracker-app.vercel.app).
+
 ![Dashboard on desktop](docs/desktop.jpg)
 
 ![On iPhone: dashboard, the ＋ menu, statement import, Money Wrapped](docs/phone-strip.jpg)
